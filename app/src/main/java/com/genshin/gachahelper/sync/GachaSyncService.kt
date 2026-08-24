@@ -89,7 +89,8 @@ class GachaSyncService @Inject constructor(
             val pools = listOf(
                 GachaType.CHARACTER,
                 GachaType.WEAPON,
-                GachaType.STANDARD
+                GachaType.STANDARD,
+                GachaType.CHRONICLED
             )
 
             var totalNew = 0
@@ -177,10 +178,16 @@ class GachaSyncService @Inject constructor(
                     }
 
                     // 增量判断：如果遇到 orderNumber <= 本地最大值，说明已同步过
+                    // 注意：orderNumber 是 String，必须转 Long 比较，否则字典序错误
                     if (maxOrderNumber != null && records.isNotEmpty()) {
-                        val existingRecords = records.filter { it.orderNumber <= maxOrderNumber }
+                        val maxOrderLong = maxOrderNumber.toLongOrNull() ?: 0L
+                        val existingRecords = records.filter {
+                            (it.orderNumber.toLongOrNull() ?: 0L) <= maxOrderLong
+                        }
                         if (existingRecords.isNotEmpty()) {
-                            val newRecords = records.filter { it.orderNumber > maxOrderNumber }
+                            val newRecords = records.filter {
+                                (it.orderNumber.toLongOrNull() ?: 0L) > maxOrderLong
+                            }
                             if (newRecords.isNotEmpty()) {
                                 val inserted = gachaRepository.insertRecords(newRecords)
                                 newCount += inserted

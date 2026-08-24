@@ -16,7 +16,7 @@ interface GachaRecordDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(records: List<GachaRecordEntity>): List<Long>
 
-    @Query("SELECT MAX(orderNumber) FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType")
+    @Query("SELECT orderNumber FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY CAST(orderNumber AS INTEGER) DESC LIMIT 1")
     suspend fun getMaxOrderNumber(accountId: Long, poolType: Int): String?
 
     @Query("SELECT COUNT(*) FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType")
@@ -25,19 +25,19 @@ interface GachaRecordDao {
     @Query("SELECT COUNT(*) FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity")
     suspend fun getRarityCount(accountId: Long, poolType: Int, rarity: Int): Int
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY orderNumber DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY CAST(orderNumber AS INTEGER) DESC")
     suspend fun getRecordsByPool(accountId: Long, poolType: Int): List<GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId ORDER BY orderNumber DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId ORDER BY CAST(orderNumber AS INTEGER) DESC")
     fun getAllRecordsPaged(accountId: Long): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY orderNumber DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY CAST(orderNumber AS INTEGER) DESC")
     fun getRecordsPagedByPool(accountId: Long, poolType: Int): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = :rarity ORDER BY orderNumber DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = :rarity ORDER BY CAST(orderNumber AS INTEGER) DESC")
     fun getRecordsPagedByRarity(accountId: Long, rarity: Int): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity ORDER BY orderNumber DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity ORDER BY CAST(orderNumber AS INTEGER) DESC")
     fun getRecordsPagedByPoolAndRarity(
         accountId: Long,
         poolType: Int,

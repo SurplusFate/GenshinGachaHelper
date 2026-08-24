@@ -195,11 +195,11 @@ class GachaDataImporter @Inject constructor(
      * 解析单条 UIGF 记录
      */
     private fun parseRecord(obj: JsonObject, accountId: Long): GachaRecordEntity? {
-        // gacha_type: 必需，301/302/200/100
+        // gacha_type: 必需，301/302/200/100/500
         val gachaType = obj.get("gacha_type")?.asInt ?: return null
 
         // 验证是否为有效的卡池类型
-        val validTypes = setOf(301, 302, 200, 100)
+        val validTypes = setOf(301, 302, 200, 100, 500)
         if (gachaType !in validTypes) return null
 
         // time: 必需
@@ -257,7 +257,7 @@ class GachaDataImporter @Inject constructor(
                 ?: return@withContext "{\"info\":{},\"list\":[]}"
 
             val allRecords = mutableListOf<GachaRecordEntity>()
-            for (pool in listOf(GachaType.CHARACTER, GachaType.WEAPON, GachaType.STANDARD, GachaType.NOVICE)) {
+            for (pool in listOf(GachaType.CHARACTER, GachaType.WEAPON, GachaType.STANDARD, GachaType.NOVICE, GachaType.CHRONICLED)) {
                 allRecords.addAll(gachaRepository.getRecordsByPool(account.id, pool.value))
             }
 

@@ -55,11 +55,15 @@ class StatsViewModel @Inject constructor(
             val standardRecords = gachaRepository.getRecordsByPool(
                 account.id, GachaType.STANDARD.value
             )
+            val chronicledRecords = gachaRepository.getRecordsByPool(
+                account.id, GachaType.CHRONICLED.value
+            )
 
             val report = statsCalculator.generateReport(
                 characterRecords = characterRecords,
                 weaponRecords = weaponRecords,
-                standardRecords = standardRecords
+                standardRecords = standardRecords,
+                chronicledRecords = chronicledRecords
             )
 
             _uiState.value = StatsUiState(

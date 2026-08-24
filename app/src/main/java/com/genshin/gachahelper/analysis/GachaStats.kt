@@ -37,5 +37,6 @@ data class GachaReport(
     val upSuccessRate: Double,
     val characterPoolStats: PoolStats?,
     val weaponPoolStats: PoolStats?,
-    val standardPoolStats: PoolStats?
+    val standardPoolStats: PoolStats?,
+    val chronicledPoolStats: PoolStats?
 )

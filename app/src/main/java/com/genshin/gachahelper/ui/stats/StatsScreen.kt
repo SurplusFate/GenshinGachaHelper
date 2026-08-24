@@ -151,6 +151,10 @@ fun StatsScreen(
                         PoolStatCard(poolLabel = "常驻池", stats = it)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
+                    report.chronicledPoolStats?.let {
+                        PoolStatCard(poolLabel = "集录池", stats = it)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
