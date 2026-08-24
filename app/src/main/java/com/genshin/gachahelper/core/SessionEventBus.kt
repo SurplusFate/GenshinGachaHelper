@@ -21,8 +21,11 @@ class SessionEventBus @Inject constructor() {
     )
     val events: SharedFlow<SessionEvent> = _events.asSharedFlow()
 
-    fun emit(event: SessionEvent) {
-        _events.tryEmit(event)
+    /**
+     * 挂起式发送，背压由 SharedFlow 处理，避免 buffer 溢出时静默丢弃事件
+     */
+    suspend fun emit(event: SessionEvent) {
+        _events.emit(event)
     }
 }
 
@@ -44,7 +47,4 @@ sealed class SessionEvent {
 
     /** 数据清除 */
     data object DataCleared : SessionEvent()
-
-    /** 通用刷新（兜底） */
-    data object Refresh : SessionEvent()
 }

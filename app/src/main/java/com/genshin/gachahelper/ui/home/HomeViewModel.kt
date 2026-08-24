@@ -44,24 +44,20 @@ class HomeViewModel @Inject constructor(
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     init {
-        // 监听同步状态
+        // 监听同步状态：仅用于 UI 显示同步进度，刷新由 SessionEventBus.DataSynced 驱动
         viewModelScope.launch {
             syncService.syncState.collect { syncState ->
                 _uiState.value = _uiState.value.copy(syncState = syncState)
-                if (syncState is SyncState.Success) {
-                    loadData()
-                }
             }
         }
 
-        // 监听全局会话事件（登录/导入/清除等）
+        // 监听全局会话事件（登录/导入/同步/清除等）
         viewModelScope.launch {
             sessionEventBus.events.collect { event ->
                 when (event) {
                     SessionEvent.LoginCompleted,
                     SessionEvent.DataImported,
-                    SessionEvent.DataSynced,
-                    SessionEvent.Refresh -> loadData()
+                    SessionEvent.DataSynced -> loadData()
 
                     SessionEvent.LogoutCompleted,
                     SessionEvent.DataCleared -> {

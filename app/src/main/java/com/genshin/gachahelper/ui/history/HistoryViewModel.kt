@@ -82,8 +82,7 @@ class HistoryViewModel @Inject constructor(
                 when (event) {
                     SessionEvent.LoginCompleted,
                     SessionEvent.DataImported,
-                    SessionEvent.DataSynced,
-                    SessionEvent.Refresh -> _refreshTrigger.value++
+                    SessionEvent.DataSynced -> _refreshTrigger.value++
 
                     SessionEvent.LogoutCompleted,
                     SessionEvent.DataCleared -> {

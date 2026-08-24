@@ -4,6 +4,8 @@ import com.genshin.gachahelper.auth.ApiResult
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.auth.MihoyoApiService
 import com.genshin.gachahelper.config.store.ConfigStore
+import com.genshin.gachahelper.core.SessionEvent
+import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.local.entity.AccountEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
@@ -45,7 +47,8 @@ class GachaSyncService @Inject constructor(
     private val configStore: ConfigStore,
     private val authRepository: AuthRepository,
     private val mihoyoApi: MihoyoApiService,
-    private val gachaRepository: GachaRepository
+    private val gachaRepository: GachaRepository,
+    private val sessionEventBus: SessionEventBus
 ) {
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
@@ -114,6 +117,8 @@ class GachaSyncService @Inject constructor(
             gachaRepository.updateLastSyncTime(accountId, System.currentTimeMillis())
 
             _syncState.value = SyncState.Success(totalNew, totalRecords)
+            // 通知全局：同步完成，其他 ViewModel 通过事件总线刷新（替代旁路监听 syncState）
+            sessionEventBus.emit(SessionEvent.DataSynced)
 
         } catch (e: Exception) {
             _syncState.value = SyncState.Error(e.message ?: "同步失败")
