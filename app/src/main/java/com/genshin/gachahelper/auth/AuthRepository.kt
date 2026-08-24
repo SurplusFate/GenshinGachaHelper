@@ -172,13 +172,17 @@ class AuthRepository @Inject constructor(
     /**
      * 构建 API 请求用的 Cookie 字符串
      * 包含 v2 版本的 token，兼容新旧接口
+     *
+     * 一次性读取 DataStore 取出所有字段，避免每个 token 单独 first() 造成的
+     * 多次串行 IO 与反序列化（原先 5 次 first() → 现在 1 次）。
      */
     suspend fun buildCookieString(): String {
-        val stoken = getStoken() ?: return ""
-        val ltuid = getLtuid() ?: ""
-        val mid = getMid() ?: ""
-        val cookieToken = getCookieToken() ?: ""
-        val ltoken = getLtoken() ?: ""
+        val prefs = context.authDataStore.data.first()
+        val stoken = prefs[Keys.STOKEN] ?: return ""
+        val ltuid = prefs[Keys.LTUID] ?: ""
+        val mid = prefs[Keys.MID] ?: ""
+        val cookieToken = prefs[Keys.COOKIE_TOKEN] ?: ""
+        val ltoken = prefs[Keys.LTOKEN] ?: ""
         return buildString {
             append("stoken=$stoken")
             append("; stoken_v2=$stoken")

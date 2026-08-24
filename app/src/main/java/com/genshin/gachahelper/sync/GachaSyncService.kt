@@ -12,6 +12,7 @@ import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.remote.GachaApiClient
 import com.genshin.gachahelper.remote.GachaResponseParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -212,8 +213,8 @@ class GachaSyncService @Inject constructor(
                 }
             }
 
-            // 避免请求过快
-            Thread.sleep(300)
+            // 避免请求过快（用 delay 而非 Thread.sleep，避免阻塞 IO 线程）
+            delay(300)
         }
 
         return PoolSyncResult(newCount, totalCount)

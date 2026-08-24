@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 
 data class HomeUiState(
@@ -42,6 +44,9 @@ class HomeViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    // 串行化 loadData，避免事件并发触发时多个加载重叠写 _uiState 造成 last-write-wins 回退
+    private val loadMutex = Mutex()
 
     init {
         // 监听同步状态：仅用于 UI 显示同步进度，刷新由 SessionEventBus.DataSynced 驱动
@@ -72,21 +77,23 @@ class HomeViewModel @Inject constructor(
 
     fun loadData() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            val loggedIn = authRepository.isLoggedIn()
-            val uid = authRepository.getUid()
-            val nickname = authRepository.getNickname()
+            loadMutex.withLock {
+                _uiState.value = _uiState.value.copy(isLoading = true)
+                val loggedIn = authRepository.isLoggedIn()
+                val uid = authRepository.getUid()
+                val nickname = authRepository.getNickname()
 
-            _uiState.value = _uiState.value.copy(
-                isLoggedIn = loggedIn,
-                uid = uid,
-                nickname = nickname
-            )
+                _uiState.value = _uiState.value.copy(
+                    isLoggedIn = loggedIn,
+                    uid = uid,
+                    nickname = nickname
+                )
 
-            if (loggedIn) {
-                loadStats()
-            } else {
-                _uiState.value = _uiState.value.copy(isLoading = false)
+                if (loggedIn) {
+                    loadStats()
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
             }
         }
     }

@@ -13,7 +13,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,17 +27,13 @@ import javax.inject.Singleton
 @Singleton
 class DeviceFpService @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val client: OkHttpClient
 ) {
     companion object {
         private const val API_GET_FP =
             "https://public-data-api.mihoyo.com/device-fp/api/getFp"
     }
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
 
     /**
      * 生成并缓存 device_fp

@@ -7,7 +7,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -78,7 +77,8 @@ data class PassportQrStatus(
 @Singleton
 class MihoyoApiService @Inject constructor(
     private val authRepository: AuthRepository,
-    private val deviceFpService: DeviceFpService
+    private val deviceFpService: DeviceFpService,
+    private val client: OkHttpClient
 ) {
     companion object {
         // ============== 通行证扫码登录（新 API，推荐） ==============
@@ -127,12 +127,6 @@ class MihoyoApiService @Inject constructor(
         private const val CLIENT_TYPE_WEB = "5"
         private const val CLIENT_TYPE_TOKEN = "4"
     }
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
 
     // ==================================================================
     // 通行证扫码登录（新 API，推荐）

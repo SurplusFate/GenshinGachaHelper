@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 
 data class StatsUiState(
@@ -32,6 +34,9 @@ class StatsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(StatsUiState())
     val uiState: StateFlow<StatsUiState> = _uiState.asStateFlow()
+
+    // 串行化 loadStats，避免事件并发触发时多次重叠写 _uiState 造成 last-write-wins 回退
+    private val loadMutex = Mutex()
 
     init {
         // 监听全局会话事件（登录/导入/同步/清除等），由事件总线统一驱动刷新
@@ -55,41 +60,43 @@ class StatsViewModel @Inject constructor(
 
     fun loadStats() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
+            loadMutex.withLock {
+                _uiState.value = _uiState.value.copy(isLoading = true)
 
-            val uid = authRepository.getUid()
-            val account = gachaRepository.getAccountByUid(uid ?: "")
+                val uid = authRepository.getUid()
+                val account = gachaRepository.getAccountByUid(uid ?: "")
 
-            if (account == null) {
-                _uiState.value = StatsUiState(isLoading = false, hasData = false)
-                return@launch
+                if (account == null) {
+                    _uiState.value = StatsUiState(isLoading = false, hasData = false)
+                    return@withLock
+                }
+
+                val characterRecords = gachaRepository.getRecordsByPool(
+                    account.id, GachaType.CHARACTER.value
+                )
+                val weaponRecords = gachaRepository.getRecordsByPool(
+                    account.id, GachaType.WEAPON.value
+                )
+                val standardRecords = gachaRepository.getRecordsByPool(
+                    account.id, GachaType.STANDARD.value
+                )
+                val chronicledRecords = gachaRepository.getRecordsByPool(
+                    account.id, GachaType.CHRONICLED.value
+                )
+
+                val report = statsCalculator.generateReport(
+                    characterRecords = characterRecords,
+                    weaponRecords = weaponRecords,
+                    standardRecords = standardRecords,
+                    chronicledRecords = chronicledRecords
+                )
+
+                _uiState.value = StatsUiState(
+                    report = report,
+                    isLoading = false,
+                    hasData = report.totalPulls > 0
+                )
             }
-
-            val characterRecords = gachaRepository.getRecordsByPool(
-                account.id, GachaType.CHARACTER.value
-            )
-            val weaponRecords = gachaRepository.getRecordsByPool(
-                account.id, GachaType.WEAPON.value
-            )
-            val standardRecords = gachaRepository.getRecordsByPool(
-                account.id, GachaType.STANDARD.value
-            )
-            val chronicledRecords = gachaRepository.getRecordsByPool(
-                account.id, GachaType.CHRONICLED.value
-            )
-
-            val report = statsCalculator.generateReport(
-                characterRecords = characterRecords,
-                weaponRecords = weaponRecords,
-                standardRecords = standardRecords,
-                chronicledRecords = chronicledRecords
-            )
-
-            _uiState.value = StatsUiState(
-                report = report,
-                isLoading = false,
-                hasData = report.totalPulls > 0
-            )
         }
     }
 }

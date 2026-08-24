@@ -107,6 +107,28 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-24 · 性能优化（commit 待提交）
+
+针对全量审查中标注为"重要/一般"且可低风险落地的性能项做集中优化。
+
+**优化内容**：
+1. **共享 OkHttpClient**：新建 `di/NetworkModule` 通过 Hilt 提供单一 `@Singleton OkHttpClient`，
+   `MihoyoApiService` / `DeviceFpService` / `GachaApiClient` 三处各自 `OkHttpClient.Builder()` 改为构造注入。
+   复用连接池与 dispatcher 线程池，减少内存与连接开销。
+2. **`AuthRepository.buildCookieString` 批量读 DataStore**：原先调用 5 个 getter，每个 `data.first()`
+   串行读一次 Preferences，现在改为一次性 `data.first()` 取出 prefs 后复用。每个带 Cookie 的
+   API 请求路径都受益。
+3. **`GachaSyncService` 用 `delay` 替换 `Thread.sleep`**：原先在 `Dispatchers.IO` 协程里
+   `Thread.sleep(300)` 阻塞 IO 线程，分页同步每页都阻塞；改为挂起式 `delay(300)` 释放线程。
+4. **`HomeViewModel.loadData` / `StatsViewModel.loadStats` 加 Mutex 串行化**：事件总线可能在
+   `init { loadData() }` 还没跑完时就投递 `LoginCompleted`/`DataSynced` 等事件，导致多个加载
+   协程重叠写 `_uiState`，last-write-wins 可能回退到旧数据。加 `Mutex.withLock` 后强制串行。
+
+**审查清单对照**：本轮修复了"一般"组的"两个 OkHttpClient 不共享连接池"与
+"AuthRepository buildCookieString 连读 5 次"，以及"重要"组的"Thread.sleep 阻塞 IO 线程"和
+"HomeViewModel/StatsViewModel 并发竞态"。其余项（明文 token、destructive migration、
+minify 关闭、salt 裸露、JSON 拼接未转义等）仍待办。
+
 ### 2026-08-24 · 全局刷新机制接线修复（commit `f7442cb`）
 
 **问题**：上一提交 `d1f266c` 引入 `SessionEventBus`，但 `DataSynced` 事件从未被 emit，三个 ViewModel 中的对应 `when` 分支是死代码；实际刷新依赖各 ViewModel 直接 `collect { syncService.syncState }` 的旁路，与提交描述不符。
@@ -131,7 +153,7 @@ gradle assembleDebug
 **重要（正确性 / 稳健性）**
 - `AuthViewModel` 把 token 片段、原始响应、stack trace 直接塞进 `debugInfo`，截图或崩溃采集会泄露凭证。生产构建应关闭或脱敏。
 - `GachaApiClient.logError` 把含 `authkey`/`uid` 的响应体写入 `filesDir/errors/`，无大小上限、无清理机制。
-- `GachaSyncService` 用 `Thread.sleep(300)` 而非 `delay`，阻塞 IO 线程。
+- ~~`GachaSyncService` 用 `Thread.sleep(300)` 而非 `delay`，阻塞 IO 线程。~~ ✓ 已在性能优化轮修复
 - `GachaApiClient.buildPostBody` 与 `MihoyoApiService` 多处字符串模板拼 JSON / URL 未转义，存在 JSON 破坏与字段注入风险。应统一用 `JsonObject` + `HttpUrl.Builder`。
 - `MihoyoApiService` 的 OkHttpClient `followRedirects(true)`，认证请求带 Cookie 时可能跨域泄露。应设 `false`。
 - `GachaResponseParser.parseRarity` 用 `value.contains("5")` 判断星级，`"15"`/`"S5"` 会被误识别为 5 星。应精确匹配。
@@ -140,8 +162,8 @@ gradle assembleDebug
 - `GachaSyncService.syncAll` 的"读-判断-写"非原子，并发同步可能双进。应改 `Mutex.tryLock()`。
 
 **一般（架构 / 可维护性）**
-- 两个 `OkHttpClient` 不共享连接池，应抽成 Hilt 单一 `@Singleton`。
-- `AuthRepository` 每个字段单独 `data.first()`，`buildCookieString` 连读 5 次 DataStore。应一次性取 `prefs`。
+- ~~两个 `OkHttpClient` 不共享连接池，应抽成 Hilt 单一 `@Singleton`。~~ ✓ 已在性能优化轮修复
+- ~~`AuthRepository` 每个字段单独 `data.first()`，`buildCookieString` 连读 5 次 DataStore。~~ ✓ 已在性能优化轮修复（其余 getter 仍未批量化，调用频率低，暂不动）
 - `DsSigner` 既是 `object` 又标 `@Singleton` 冗余；`APP_VERSION="2.71.1"` 硬编码，过期会让全部请求失败且无运行时检测。
 - `ConfigStore` 配置解析失败静默回退默认，用户无感知。应 log 并暴露 error state。
 - 引入 `kotlinx-serialization-json` 但全程用 Gson，多余依赖。
