@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.io.FileOutputStream
 import javax.inject.Inject
 
 data class SettingsUiState(
@@ -145,10 +144,36 @@ class SettingsViewModel @Inject constructor(
             }
             val json = gachaDataImporter.exportToString(uid)
             val fileName = "UIGF_${uid}_${System.currentTimeMillis()}.json"
-            val file = java.io.File(context.getExternalFilesDir(null), fileName)
-            FileOutputStream(file).use { it.write(json.toByteArray()) }
-            _importMessage.value = "导出成功: $fileName"
-            callback(file.absolutePath)
+            try {
+                // 使用 MediaStore 写入 Download 目录，兼容 Android 10+
+                val resolver = context.contentResolver
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/")
+                    }
+                }
+                val collection = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                } else {
+                    android.provider.MediaStore.Files.getContentUri("external")
+                }
+                val uri = resolver.insert(collection, values)
+                if (uri == null) {
+                    _importMessage.value = "导出失败：无法创建文件"
+                    return@launch
+                }
+                resolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
+                    ?: run {
+                        _importMessage.value = "导出失败：无法写入文件"
+                        return@launch
+                    }
+                _importMessage.value = "导出成功: 已保存到 Download/$fileName"
+                callback(fileName)
+            } catch (e: Exception) {
+                _importMessage.value = "导出失败: ${e.message}"
+            }
         }
     }
 
