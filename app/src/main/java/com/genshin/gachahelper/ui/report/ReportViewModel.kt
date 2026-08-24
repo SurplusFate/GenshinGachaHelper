@@ -92,9 +92,6 @@ class ReportViewModel @Inject constructor(
                 val chronicledRecords = gachaRepository.getRecordsByPool(
                     account.id, GachaType.CHRONICLED.value
                 )
-                val stellarRecords = gachaRepository.getRecordsByPool(
-                    account.id, GachaType.STELLAR.value
-                )
 
                 val report = statsCalculator.generateReport(
                     characterRecords = characterRecords,
@@ -102,8 +99,7 @@ class ReportViewModel @Inject constructor(
                     weaponRecords = weaponRecords,
                     standardRecords = standardRecords,
                     noviceRecords = noviceRecords,
-                    chronicledRecords = chronicledRecords,
-                    stellarRecords = stellarRecords
+                    chronicledRecords = chronicledRecords
                 )
 
                 _uiState.value = ReportUiState(report = report, isLoading = false)

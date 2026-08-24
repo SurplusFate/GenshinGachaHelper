@@ -342,14 +342,33 @@ class AuthViewModel @Inject constructor(
             try {
                 // 确保 Cookie 同步完成
                 CookieManager.getInstance().flush()
-                delay(500)
+                // 增加延时，确保 WebView 内所有 cookie（stoken_v2 / login_ticket 等）都已落盘
+                delay(1500)
 
                 val cookieManager = CookieManager.getInstance()
-                val cookies = cookieManager.getCookie("https://.mihoyo.com")
-                    ?: cookieManager.getCookie("https://user.mihoyo.com")
-                    ?: ""
-
-                val cookieMap = parseCookies(cookies)
+                // 从多个域名读取 cookie 并合并，避免因 CookieManager 域名匹配规则不同
+                // 而漏掉 stoken_v2 / login_ticket 等关键凭证。
+                val domains = listOf(
+                    "https://user.mihoyo.com",
+                    "https://.mihoyo.com",
+                    "https://mihoyo.com",
+                    "https://api-takumi.mihoyo.com"
+                )
+                val cookieMap = mutableMapOf<String, String>()
+                val cookieStringBuilder = StringBuilder()
+                for (domain in domains) {
+                    val raw = cookieManager.getCookie(domain) ?: continue
+                    if (raw.isBlank()) continue
+                    cookieStringBuilder.append(raw).append("; ")
+                    val domainMap = parseCookies(raw)
+                    for ((key, value) in domainMap) {
+                        // 合并策略：保留非空值，已存在非空值时不覆盖
+                        if (value.isNotBlank() && cookieMap[key].isNullOrBlank()) {
+                            cookieMap[key] = value
+                        }
+                    }
+                }
+                val cookies = cookieStringBuilder.toString()
 
                 val loginTicket = cookieMap["login_ticket"]
                 val stokenV2 = cookieMap["stoken_v2"] ?: cookieMap["stoken"]

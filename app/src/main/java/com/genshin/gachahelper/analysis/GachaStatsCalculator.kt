@@ -20,7 +20,6 @@ class GachaStatsCalculator @Inject constructor() {
         private const val STANDARD_PITY_CEILING = 90
         private const val NOVICE_PITY_CEILING = 90
         private const val CHRONICLED_PITY_CEILING = 90
-        private const val STELLAR_PITY_CEILING = 90
 
         /**
          * 常驻五星角色列表（角色池出这些 = 歪了 50/50）
@@ -167,7 +166,6 @@ class GachaStatsCalculator @Inject constructor() {
             GachaType.STANDARD.value -> STANDARD_PITY_CEILING
             GachaType.NOVICE.value -> NOVICE_PITY_CEILING
             GachaType.CHRONICLED.value -> CHRONICLED_PITY_CEILING
-            GachaType.STELLAR.value -> STELLAR_PITY_CEILING
             else -> CHARACTER_PITY_CEILING
         }
     }
@@ -181,8 +179,7 @@ class GachaStatsCalculator @Inject constructor() {
         weaponRecords: List<GachaRecordEntity>,
         standardRecords: List<GachaRecordEntity>,
         noviceRecords: List<GachaRecordEntity> = emptyList(),
-        chronicledRecords: List<GachaRecordEntity> = emptyList(),
-        stellarRecords: List<GachaRecordEntity> = emptyList()
+        chronicledRecords: List<GachaRecordEntity> = emptyList()
     ): GachaReport {
         // 角色池301和400共享保底，计算时互相传入对方的记录
         val characterStats = if (characterRecords.isNotEmpty()) {
@@ -215,13 +212,9 @@ class GachaStatsCalculator @Inject constructor() {
             calculatePoolStats(chronicledRecords, GachaType.CHRONICLED.value)
         } else null
 
-        val stellarStats = if (stellarRecords.isNotEmpty()) {
-            calculatePoolStats(stellarRecords, GachaType.STELLAR.value)
-        } else null
-
         // 所有记录
         val allRecords = characterRecords + character2Records + weaponRecords +
-            standardRecords + noviceRecords + chronicledRecords + stellarRecords
+            standardRecords + noviceRecords + chronicledRecords
         val allFiveStars = allRecords.filter { it.rarity == 5 }
         val totalPulls = allRecords.size
 
@@ -236,7 +229,6 @@ class GachaStatsCalculator @Inject constructor() {
             if (standardStats != null) addAll(standardStats.fiveStarIntervals)
             if (noviceStats != null) addAll(noviceStats.fiveStarIntervals)
             if (chronicledStats != null) addAll(chronicledStats.fiveStarIntervals)
-            if (stellarStats != null) addAll(stellarStats.fiveStarIntervals)
         }
 
         val avgPulls = if (allFiveStars.isNotEmpty()) {
@@ -265,8 +257,7 @@ class GachaStatsCalculator @Inject constructor() {
             weaponPoolStats = weaponStats,
             standardPoolStats = standardStats,
             novicePoolStats = noviceStats,
-            chronicledPoolStats = chronicledStats,
-            stellarPoolStats = stellarStats
+            chronicledPoolStats = chronicledStats
         )
     }
 }

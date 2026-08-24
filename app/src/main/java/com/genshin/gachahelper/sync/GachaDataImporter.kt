@@ -254,7 +254,7 @@ class GachaDataImporter @Inject constructor(
         } ?: return null
 
         // 验证是否为有效的卡池类型（400 = 角色活动祈愿-2）
-        val validTypes = setOf(301, 400, 302, 200, 100, 500, 600)
+        val validTypes = setOf(301, 400, 302, 200, 100, 500)
         if (gachaType !in validTypes) return null
 
         // time: 必需
@@ -320,7 +320,7 @@ class GachaDataImporter @Inject constructor(
                 ?: return@withContext "{\"info\":{},\"list\":[]}"
 
             val allRecords = mutableListOf<GachaRecordEntity>()
-            for (pool in listOf(GachaType.CHARACTER, GachaType.CHARACTER_2, GachaType.WEAPON, GachaType.STANDARD, GachaType.NOVICE, GachaType.CHRONICLED, GachaType.STELLAR)) {
+            for (pool in listOf(GachaType.CHARACTER, GachaType.CHARACTER_2, GachaType.WEAPON, GachaType.STANDARD, GachaType.NOVICE, GachaType.CHRONICLED)) {
                 allRecords.addAll(gachaRepository.getRecordsByPool(account.id, pool.value))
             }
 

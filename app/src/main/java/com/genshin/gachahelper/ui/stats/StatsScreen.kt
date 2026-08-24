@@ -166,9 +166,6 @@ fun StatsScreen(
                         PoolStatCard(poolLabel = "集录池", stats = it)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
-                    report.stellarPoolStats?.let {
-                        PoolStatCard(poolLabel = "千星奇域", stats = it)
-                    }
 
                     Spacer(modifier = Modifier.height(16.dp))
 

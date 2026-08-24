@@ -31,7 +31,6 @@ data class HomeUiState(
     val standardStats: PoolStats? = null,
     val noviceStats: PoolStats? = null,
     val chronicledStats: PoolStats? = null,
-    val stellarStats: PoolStats? = null,
     val syncState: SyncState = SyncState.Idle,
     val isLoading: Boolean = true
 )
@@ -129,9 +128,6 @@ class HomeViewModel @Inject constructor(
         val noviceRecords = gachaRepository.getRecordsByPool(
             accountId, GachaType.NOVICE.value
         )
-        val stellarRecords = gachaRepository.getRecordsByPool(
-            accountId, GachaType.STELLAR.value
-        )
 
         val characterStats = if (characterRecords.isNotEmpty()) {
             statsCalculator.calculatePoolStats(
@@ -163,10 +159,6 @@ class HomeViewModel @Inject constructor(
             statsCalculator.calculatePoolStats(noviceRecords, GachaType.NOVICE.value)
         } else null
 
-        val stellarStats = if (stellarRecords.isNotEmpty()) {
-            statsCalculator.calculatePoolStats(stellarRecords, GachaType.STELLAR.value)
-        } else null
-
         _uiState.value = _uiState.value.copy(
             characterStats = characterStats,
             character2Stats = character2Stats,
@@ -174,7 +166,6 @@ class HomeViewModel @Inject constructor(
             standardStats = standardStats,
             noviceStats = noviceStats,
             chronicledStats = chronicledStats,
-            stellarStats = stellarStats,
             isLoading = false
         )
     }

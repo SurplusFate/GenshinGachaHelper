@@ -219,13 +219,6 @@ fun HomeScreen(
             } ?: EmptyPoolCard("集录池")
         }
 
-        // 千星奇域
-        item {
-            uiState.stellarStats?.let {
-                PoolCard(poolStats = it, poolLabel = "千星奇域")
-            } ?: EmptyPoolCard("千星奇域")
-        }
-
         item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }

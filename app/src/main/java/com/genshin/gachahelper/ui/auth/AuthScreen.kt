@@ -2,6 +2,9 @@ package com.genshin.gachahelper.ui.auth
 
 import android.graphics.Bitmap
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView as NativeWebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +37,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.genshin.gachahelper.auth.GameRole
+import com.google.accompanist.web.AccompanistWebViewClient
 import com.google.accompanist.web.WebView
 import com.google.accompanist.web.rememberWebViewState
 
@@ -140,6 +145,51 @@ fun WebViewLoginView(
 ) {
     val webViewState = rememberWebViewState(url = "https://user.mihoyo.com/#/login")
 
+    // 始终持有最新的回调引用，避免 remember 出的 client 捕获到过期的 lambda
+    val currentOnLoginComplete by rememberUpdatedState(onLoginComplete)
+
+    // 自动检测登录完成的 WebViewClient：当 URL 离开 #/login 且仍位于 user.mihoyo.com
+    // （含子路径）时认为登录已成功，自动触发凭证读取流程，无需用户手动点击按钮。
+    val loginClient = remember {
+        object : AccompanistWebViewClient() {
+            private var triggered = false
+
+            override fun shouldOverrideUrlLoading(
+                view: NativeWebView,
+                request: WebResourceRequest
+            ): Boolean {
+                checkLoginSuccess(request.url?.toString())
+                return false
+            }
+
+            override fun onPageStarted(view: NativeWebView, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                checkLoginSuccess(url)
+            }
+
+            override fun doUpdateVisitedHistory(
+                view: NativeWebView,
+                url: String?,
+                isReload: Boolean
+            ) {
+                super.doUpdateVisitedHistory(view, url, isReload)
+                checkLoginSuccess(url)
+            }
+
+            private fun checkLoginSuccess(url: String?) {
+                if (triggered || url.isNullOrBlank()) return
+                // 登录页地址：https://user.mihoyo.com/#/login
+                // 登录成功后 URL 会脱离 #/login 并停留在 user.mihoyo.com（含子路径）
+                val onUserMihoyo = url.contains("user.mihoyo.com")
+                val leftLoginPage = !url.contains("#/login")
+                if (onUserMihoyo && leftLoginPage) {
+                    triggered = true
+                    currentOnLoginComplete()
+                }
+            }
+        }
+    }
+
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -152,6 +202,7 @@ fun WebViewLoginView(
             WebView(
                 state = webViewState,
                 modifier = Modifier.fillMaxSize(),
+                client = loginClient,
                 onCreated = { webView ->
                     webView.settings.apply {
                         javaScriptEnabled = true
@@ -291,7 +342,7 @@ fun QrCodeView(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "打开原神 → 设置 → 账号 → 扫码登录",
+                text = "请使用分屏模式：长按底部任务键开启分屏，在另一半屏幕打开原神 → 设置 → 账号 → 扫码登录",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -300,6 +351,13 @@ fun QrCodeView(
             OutlinedButton(onClick = onRefresh) {
                 Text("刷新二维码")
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "提示：需要分屏操作，截图扫码无法识别",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
         } else {
             if (error != null) {
                 Text(

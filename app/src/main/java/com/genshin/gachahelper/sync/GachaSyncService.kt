@@ -96,8 +96,7 @@ class GachaSyncService @Inject constructor(
                 GachaType.WEAPON,
                 GachaType.STANDARD,
                 GachaType.NOVICE,
-                GachaType.CHRONICLED,
-                GachaType.STELLAR
+                GachaType.CHRONICLED
             )
 
             var totalNew = 0

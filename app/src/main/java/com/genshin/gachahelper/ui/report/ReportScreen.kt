@@ -132,9 +132,6 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                         MiniPoolReport("集录池", stats)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
-                    report.stellarPoolStats?.let { stats ->
-                        MiniPoolReport("千星奇域", stats)
-                    }
 
                     Spacer(modifier = Modifier.weight(1f))
 

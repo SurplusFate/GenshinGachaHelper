@@ -40,6 +40,5 @@ data class GachaReport(
     val weaponPoolStats: PoolStats?,
     val standardPoolStats: PoolStats?,
     val novicePoolStats: PoolStats?,
-    val chronicledPoolStats: PoolStats?,
-    val stellarPoolStats: PoolStats?
+    val chronicledPoolStats: PoolStats?
 )
