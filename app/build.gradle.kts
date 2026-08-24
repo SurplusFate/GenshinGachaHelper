@@ -23,8 +23,8 @@ android {
         applicationId = "com.genshin.gachahelper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.1.1"
+        versionCode = 4
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -33,6 +33,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 与 release 使用同一签名密钥，避免 debug / release 包签名不一致导致覆盖安装失败
+            signingConfig = signingConfigs.getByName("release")
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")

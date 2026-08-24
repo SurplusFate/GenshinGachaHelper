@@ -116,6 +116,34 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-24 · v1.2.0 正式版：删除失效接口配置 + 白天/夜间主题 + 统一签名发行（commit 待提交）
+
+**版本信息**
+
+- `versionCode = 4`，`versionName = "1.2.0"`
+- `app/build.gradle.kts` 中 `debug` / `release` 两个 buildType 统一使用同一个 release
+  签名密钥（`/data/user/work/release.keystore`，`gacha-release`），避免 debug / release
+  包签名不一致导致无法覆盖安装。
+
+**本轮改动包含**
+
+1. **删除未生效的接口配置功能**（commit `a0e1ea9`）：确认配置对 Mihoyo 官方抽卡 API
+   请求无任何可观察效果，整个 `config/` 模块、`default_api_config.json`、
+   `GachaApiClient`/`GachaResponseParser` 的 ApiConfig 形参、以及 SettingsScreen
+   「接口配置」Section 全部移除。
+2. **修复 `parseRarity` 5 星误判 bug**（commit `a0e1ea9`）：`value.contains("5")`
+   会把 `"15"` / `"S5"` 判为 5 星 → 改为 S/A/B 优先 → 纯数字精确匹配（coerceIn 3..5）
+   → contains 兜底。
+3. **新增白天/夜间模式主题**（commit `a0e1ea9`）：
+   - `ThemeMode` 枚举（随系统 / 白天 / 夜间）
+   - `ThemeRepository` 用独立的 `settings_store` DataStore 持久化
+   - `GenshinGachaHelperTheme(themeMode, systemDark)` 应用到全局 MaterialTheme
+   - `MainActivity` 通过 `collectAsStateWithLifecycle` 订阅 Flow，
+     用户在「设置 → 主题设置」切换后实时全局生效，无需退出重进
+   - SettingsScreen 原「接口配置」位置替换为三选一 RadioGroup
+4. **签名统一**（本 commit）：debug / release 均使用同一 release keystore，
+   保证发布 APK 与日常构建 APK 可互相覆盖安装。
+
 ### 2026-08-24 · 删除接口配置功能 + 新增白天/夜间主题（commit `a0e1ea9`）
 
 **删除接口配置功能**
