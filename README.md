@@ -5,12 +5,14 @@
 ## 功能特性
 
 - **米游社扫码登录**：通过通行证 Passport API 扫码授权，无需复制链接
-- **抽卡记录同步**：一键同步角色池、武器池、常驻池抽卡记录
-- **UIGF 导入/导出**：支持 UIGF v3.0 / v4.0 格式的历史数据导入导出，兼容 Snap.Hutao 等工具
+- **验证码/密码登录**：WebView 内置米游社登录页，自动检测登录完成
+- **抽卡记录同步**：一键同步角色池、武器池、常驻池、新手池抽卡记录
+- **UIGF 导入/导出**：支持 UIGF v3.0 格式的历史数据导入导出，内容指纹去重，兼容多数据源合并
 - **本地永久存储**：Room SQLite 数据库，所有数据保存在本地，无服务器依赖
 - **接口配置可导入**：JSON 格式接口配置，支持自定义 API 地址和参数
-- **统计分析**：抽卡统计、保底计算、五星抽数分析
+- **统计分析**：抽卡统计、保底计算、五星抽数分析、角色池 301/400 共享保底
 - **设备指纹防风控**：自动生成 device_fp，规避 -3503 风控
+- **导出到 Download**：UIGF 数据直接导出到下载目录，文件管理器可见
 
 ## 技术栈
 
@@ -28,14 +30,21 @@
 ## 认证流程
 
 ```
-扫码登录 (Passport API)
+登录方式
+  ├── 扫码登录（Passport API）
+  │     ├─ createQRLogin → 生成二维码（分屏扫码）
+  │     ├─ queryQRLoginStatus → 轮询扫码状态
+  │     │     └─ Confirmed → 返回 stoken
+  │     └─ savePassportCredentialsAndFetchRoles → 换取 cookie_token / ltoken
   │
-  ├─ createQRLogin → 生成二维码
-  ├─ queryQRLoginStatus → 轮询扫码状态
-  │     └─ Confirmed → 返回 stoken
+  └── 验证码/密码登录（WebView）
+        ├─ user.mihoyo.com/#/login → 用户在 H5 页登录
+        ├─ 自动检测 URL 离开 #/login → 提取 cookie
+        └─ 多域名合并读取 → stoken_v2 / login_ticket
+
+  通用后续流程
   ├─ getCookieAccountInfoBySToken → 换取 cookie_token
   ├─ getLTokenBySToken → 换取 ltoken
-  │
   └─ getUserGameRolesByCookie → 获取游戏角色
         └─ genAuthKey → 生成 authkey
               └─ getGachaLog → 拉取抽卡记录
@@ -106,6 +115,56 @@ gradle assembleDebug
 ## 迭代记录
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
+
+### 2026-08-24 · v1.1.0 正式发布（commit `9754c5e`..`6959f94`）
+
+**本轮集中修复了数据统计、登录认证、数据导入、UI 体验四个方面的问题，并发布首个正式签名 Release 版本。**
+
+#### 1. 角色池 301/400 共享保底修复（commit `c30dd95`）
+
+**现象**：五星间隔统计出现 184 抽，远超 90 抽保底上限。
+
+**根因**：角色活动祈愿（301）和角色活动祈愿-2（400）在游戏内共享保底计数，但代码将两者视为独立池分别计算间隔，导致一池出金记录被遗漏，间隔虚高。
+
+**修复**：`GachaStatsCalculator` 合并 301+400 记录后计算五星间隔和当前垫抽；`HomeViewModel`、`ReportViewModel`、`StatsViewModel` 均传递 `sharedPityRecords` 参数实现共享保底计算。
+
+#### 2. 验证码登录 retcode -100 修复（commit `6959f94`）
+
+**现象**：WebView 验证码/密码登录后，`generateAuthKey` 报 retcode -100「登录状态失效」。
+
+**根因**：`CookieManager.flush()` 后仅等待 500ms，部分 cookie 未落盘；且只从单一域名读取 cookie，遗漏了 `stoken_v2` 等关键凭证。
+
+**修复**：
+- flush 延时从 500ms 增至 1500ms
+- 从 4 个域名合并读取 cookie（`user.mihoyo.com`、`.mihoyo.com`、`mihoyo.com`、`api-takumi.mihoyo.com`）
+- WebView 自动检测 URL 离开 `#/login` 页面时触发登录完成，无需手动点按钮
+
+#### 3. 扫码登录分屏提示（commit `6959f94`）
+
+**问题**：原提示让用户「打开原神扫码」，但截图扫码无法识别，只能分屏操作。
+
+**修复**：二维码页面提示改为分屏操作指引，加注「截图扫码无法识别」。
+
+#### 4. UIGF 导入内容指纹去重（commit `94f088f`）
+
+**问题**：不同来源（API 同步、提瓦特小组小程序导出、早期本地备份）的记录 `orderNumber`(ID) 格式不同，仅按 ID 去重会导致重复记录。
+
+**修复**：插入前查询已有记录，构建 `(卡池, 时间, 物品名)` 多重集（multiset），内容匹配的记录跳过。支持同一时间抽出相同物品的正确处理（多重集计数递减）。
+
+#### 5. 移除千星奇域池（commit `6959f94`）
+
+移除 `STELLAR(600)` 相关的全部代码（枚举、保底、统计、UI、同步、导入导出），共 11 个文件，搜索 `STELLAR`/`stellar`/`千星` 零残留。
+
+#### 6. 导出路径改到 Download 目录（commit `9754c5e`）
+
+**问题**：导出文件保存在 `Android/data/com.genshin.gachahelper/files/`，用户难找。
+
+**修复**：改用 MediaStore API 写入 Download 目录，兼容 Android 10+ Scoped Storage，文件管理器「下载」中直接可见。
+
+#### 7. 正式签名 Release 构建
+
+生成 RSA 2048 位、有效期 100 年的正式签名 keystore，配置到 `build.gradle.kts` 的 `signingConfigs.release`，版本号升至 `1.1.0 (versionCode=2)`。
+
 
 ### 2026-08-24 · 修复验证码/密码登录：与扫码凭证等价（commit `93a5875`）
 
