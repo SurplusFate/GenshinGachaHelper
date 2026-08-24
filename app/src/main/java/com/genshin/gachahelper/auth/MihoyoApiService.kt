@@ -596,7 +596,7 @@ class MihoyoApiService @Inject constructor(
         try {
             val cookie = authRepository.buildCookieString()
             if (cookie.isBlank()) {
-                return@withContext ApiResult.Error("未登录，缺少 stoken", -1, "", "getRoles")
+                return@withContext ApiResult.Error("未登录，缺少有效凭证", -1, "", "getRoles")
             }
 
             val query = "game_biz=hk4e_cn"

@@ -407,11 +407,16 @@ class AuthViewModel @Inject constructor(
                     !loginTicket.isNullOrBlank() && !ltuid.isNullOrBlank() -> {
                         exchangeTokenByLoginTicket(loginTicket, ltuid, cookieTokenV2, mid)
                     }
-                    // 不满足以上：要么 ltuid 完全为空（没登录），要么登录页没下发 stoken_v2
-                    // 也没下发 login_ticket（近年 H5 登录页的变化）。
-                    // 旧方案 2/3 会把 ltoken/cookie_token 冒充 stoken 存，导致后续 getGameRoles /
-                    // generateAuthKey 全报 -100/401 但用户以为登录成功。现在改成直接报错，
-                    // 并给出明确修复指引。
+                    // 方案3：验证码登录场景 —— cookie 中没有 stoken/login_ticket，
+                    // 但有 cookie_token_v2 + ltoken_v2 + ltuid。
+                    // 这种情况下可以直接用 cookie_token 调 getUserGameRolesByCookie 获取角色，
+                    // 用 ltoken 调 genAuthKey 生成授权码，完全不需要 stoken。
+                    // stoken 只是换取 cookie_token/ltoken 的中间凭证，不是最终 API 的必须项。
+                    !ltuid.isNullOrBlank() &&
+                        (!cookieTokenV2.isNullOrBlank() || !ltokenV2.isNullOrBlank()) -> {
+                        loginWithCookieTokenDirectly(ltuid, mid, cookieTokenV2, ltokenV2)
+                    }
+                    // 不满足以上：要么 ltuid 完全为空（没登录），要么登录页没下发任何可用 token。
                     else -> {
                         setState {
                             copy(
@@ -419,7 +424,7 @@ class AuthViewModel @Inject constructor(
                                 error = if (ltuid == null) {
                                     "未检测到登录凭证，请确认已完成登录"
                                 } else {
-                                    "检测到账号（ltuid=$ltuid）但没有可用于换取凭证的 login_ticket。\n" +
+                                    "检测到账号（ltuid=$ltuid）但未获取到有效登录凭证。\n" +
                                         "请尝试：\n1. 退出账号后重新登录\n2. 改用扫码登录（推荐）"
                                 },
                                 statusText = "",
@@ -438,6 +443,48 @@ class AuthViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // WebView 登录 - 方案3：直接用 cookie_token + ltoken 登录（验证码登录场景）
+    // ------------------------------------------------------------------
+
+    private fun loginWithCookieTokenDirectly(
+        ltuid: String,
+        mid: String?,
+        cookieToken: String?,
+        ltoken: String?
+    ) {
+        setState {
+            copy(
+                phase = AuthPhase.EXCHANGING_TOKEN,
+                statusText = "正在验证登录凭证...",
+                error = null,
+                debugInfo = buildString {
+                    append("检测到 WebView 登录凭证（验证码登录模式）\n")
+                    append("ltuid: $ltuid\n")
+                    append("cookie_token: ${if (cookieToken.isNullOrBlank()) "无" else "有"}\n")
+                    append("ltoken: ${if (ltoken.isNullOrBlank()) "无" else "有"}\n")
+                    append("mid: ${mid ?: "无"}\n")
+                    append("\n正在验证凭证有效性...")
+                }
+            )
+        }
+
+        viewModelScope.launch {
+            // 保存凭证（可能没有 stoken，但有 cookie_token 和 ltoken）
+            authRepository.saveWebViewCredentials(
+                ltuid = ltuid,
+                mid = mid,
+                cookieToken = cookieToken,
+                ltoken = ltoken
+            )
+
+            // 直接尝试获取游戏角色来验证凭证是否有效
+            // getGameRoles 内部会调用 buildCookieString() 组装 cookie
+            setState { copy(statusText = "正在获取游戏角色...") }
+            fetchGameRoles()
         }
     }
 

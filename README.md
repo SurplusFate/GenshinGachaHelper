@@ -40,7 +40,9 @@
   └── 验证码/密码登录（WebView）
         ├─ user.mihoyo.com/#/login → 用户在 H5 页登录
         ├─ 自动检测 URL 离开 #/login → 提取 cookie
-        └─ 多域名合并读取 → stoken_v2 / login_ticket
+        ├─ 方案1：有 stoken_v2 → 直接走扫码同构链路
+        ├─ 方案2：有 login_ticket → 换 stoken 后走扫码链路
+        └─ 方案3：有 cookie_token_v2 + ltoken_v2 → 直接使用（验证码登录场景）
 
   通用后续流程
   ├─ getCookieAccountInfoBySToken → 换取 cookie_token
@@ -115,6 +117,20 @@ gradle assembleDebug
 ## 迭代记录
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
+
+### 2026-08-24 · v1.2.1 验证码登录修复
+
+**问题**：验证码登录后提示「检测到账号但没有可用于换取凭证的 login_ticket」，无法完成登录。
+
+**根因**：米哈游 H5 登录页（user.mihoyo.com）在验证码登录后，cookie 中不再下发 `stoken` 或 `login_ticket`，仅下发 `cookie_token_v2` 和 `ltoken_v2`。原有代码只认 `stoken`/`login_ticket` 两种凭证，导致登录失败。
+
+**修复**：
+- 新增「方案 3」登录路径：WebView cookie 中有 `cookie_token_v2` + `ltoken_v2` + `ltuid` 时，直接使用这些凭证登录，无需经过 stoken 兑换
+- `AuthRepository.buildCookieString()` 不再强制要求 stoken，只要有 `cookie_token` 或 `ltoken` 配合 `ltuid` 即可构建有效 cookie
+- 新增 `saveWebViewCredentials()` 方法支持无 stoken 的凭证保存
+- `isLoggedIn()` 判断逻辑同步更新，支持多种凭证组合判定登录状态
+
+**原理**：`stoken` 只是换取 `cookie_token`/`ltoken` 的中间凭证，最终调用 `getUserGameRolesByCookie`（需 cookie_token）和 `genAuthKey`（需 ltoken）并不需要 stoken。验证码登录直接拿到最终 token，跳过兑换环节。
 
 ### 2026-08-24 · v1.2.0 正式版：删除失效接口配置 + 白天/夜间主题 + 统一签名发行（commit `9218540`，tag `v1.2.0`）
 

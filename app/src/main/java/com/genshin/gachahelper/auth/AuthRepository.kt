@@ -137,6 +137,30 @@ class AuthRepository @Inject constructor(
     }
 
     /**
+     * 保存 WebView 登录直接获取的凭证（可能没有 stoken，但有 cookie_token 和 ltoken）
+     * 用于验证码登录等场景，cookie 中没有 stoken/login_ticket，但有 cookie_token_v2 + ltoken_v2
+     */
+    suspend fun saveWebViewCredentials(
+        ltuid: String,
+        mid: String? = null,
+        cookieToken: String? = null,
+        ltoken: String? = null,
+        stoken: String? = null
+    ) {
+        context.authDataStore.edit { prefs ->
+            prefs[Keys.LTUID] = ltuid
+            mid?.let { prefs[Keys.MID] = it }
+            cookieToken?.let { prefs[Keys.COOKIE_TOKEN] = it }
+            ltoken?.let { prefs[Keys.LTOKEN] = it }
+            stoken?.let { prefs[Keys.STOKEN] = it }
+            // 如果没有 stoken，确保清除旧的（避免混淆）
+            if (stoken == null) {
+                prefs.remove(Keys.STOKEN)
+            }
+        }
+    }
+
+    /**
      * 保存游戏角色信息（UID、服务器、昵称）
      */
     suspend fun saveGameRole(
@@ -175,19 +199,31 @@ class AuthRepository @Inject constructor(
      *
      * 一次性读取 DataStore 取出所有字段，避免每个 token 单独 first() 造成的
      * 多次串行 IO 与反序列化（原先 5 次 first() → 现在 1 次）。
+     *
+     * 注意：stoken 不是必须的，只要有 cookie_token + ltuid 或 ltoken + ltuid
+     * 就可以调用大部分接口。stoken 只是用于换取 cookie_token/ltoken 的中间凭证。
      */
     suspend fun buildCookieString(): String {
         val prefs = context.authDataStore.data.first()
-        val stoken = prefs[Keys.STOKEN] ?: return ""
+        val stoken = prefs[Keys.STOKEN] ?: ""
         val ltuid = prefs[Keys.LTUID] ?: ""
         val mid = prefs[Keys.MID] ?: ""
         val cookieToken = prefs[Keys.COOKIE_TOKEN] ?: ""
         val ltoken = prefs[Keys.LTOKEN] ?: ""
+
+        // 至少需要 ltuid + (cookie_token 或 ltoken 或 stoken) 才算有效
+        if (ltuid.isBlank() || (cookieToken.isBlank() && ltoken.isBlank() && stoken.isBlank())) {
+            return ""
+        }
+
         return buildString {
-            append("stoken=$stoken")
-            append("; stoken_v2=$stoken")
+            if (stoken.isNotBlank()) {
+                append("stoken=$stoken")
+                append("; stoken_v2=$stoken")
+            }
             if (ltuid.isNotBlank()) {
-                append("; stuid=$ltuid; ltuid=$ltuid")
+                if (stoken.isNotBlank()) append("; ")
+                append("stuid=$ltuid; ltuid=$ltuid")
                 append("; ltuid_v2=$ltuid; account_id=$ltuid; account_id_v2=$ltuid")
             }
             if (mid.isNotBlank()) {
@@ -203,7 +239,13 @@ class AuthRepository @Inject constructor(
     }
 
     suspend fun isLoggedIn(): Boolean {
-        return !getStoken().isNullOrBlank()
+        val prefs = context.authDataStore.data.first()
+        val ltuid = prefs[Keys.LTUID] ?: return false
+        val stoken = prefs[Keys.STOKEN]
+        val cookieToken = prefs[Keys.COOKIE_TOKEN]
+        val ltoken = prefs[Keys.LTOKEN]
+        return ltuid.isNotBlank() &&
+            (!stoken.isNullOrBlank() || !cookieToken.isNullOrBlank() || !ltoken.isNullOrBlank())
     }
 
     suspend fun logout() {
