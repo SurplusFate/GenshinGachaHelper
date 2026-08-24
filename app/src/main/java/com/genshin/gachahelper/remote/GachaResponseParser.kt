@@ -2,6 +2,7 @@ package com.genshin.gachahelper.remote
 
 import com.genshin.gachahelper.config.model.ApiConfig
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
+import com.genshin.gachahelper.data.model.GachaItemDatabase
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.model.ItemType
 import com.google.gson.JsonObject
@@ -51,12 +52,23 @@ class GachaResponseParser @Inject constructor() {
             for (item in listArray) {
                 val itemObj = item.asJsonObject
                 try {
+                    val itemName = getStringValue(itemObj, mapping.itemName)
+                    val itemTypeStr = getStringValue(itemObj, mapping.itemType)
+                    val rankStr = getStringValue(itemObj, mapping.rarity)
+
+                    // rank_type 缺失时根据物品名称推断
+                    val rarity = if (rankStr.isNotBlank()) {
+                        parseRarity(rankStr)
+                    } else {
+                        GachaItemDatabase.inferRarity(itemName, itemTypeStr)
+                    }
+
                     val record = GachaRecordEntity(
                         accountId = accountId,
                         poolType = poolType,
-                        itemName = getStringValue(itemObj, mapping.itemName),
-                        itemType = parseItemType(getStringValue(itemObj, mapping.itemType)),
-                        rarity = parseRarity(getStringValue(itemObj, mapping.rarity)),
+                        itemName = itemName,
+                        itemType = parseItemType(itemTypeStr),
+                        rarity = rarity,
                         time = getStringValue(itemObj, mapping.time),
                         orderNumber = getStringValue(itemObj, mapping.orderNumber)
                     )

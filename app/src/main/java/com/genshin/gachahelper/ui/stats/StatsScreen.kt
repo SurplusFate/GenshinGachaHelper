@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -64,6 +66,7 @@ fun StatsScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
                         .padding(16.dp)
                 ) {
                     // 总览卡片
@@ -143,6 +146,10 @@ fun StatsScreen(
                         PoolStatCard(poolLabel = "角色池", stats = it)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
+                    report.character2PoolStats?.let {
+                        PoolStatCard(poolLabel = "角色池-2", stats = it)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                     report.weaponPoolStats?.let {
                         PoolStatCard(poolLabel = "武器池", stats = it)
                         Spacer(modifier = Modifier.height(8.dp))
@@ -151,9 +158,16 @@ fun StatsScreen(
                         PoolStatCard(poolLabel = "常驻池", stats = it)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
+                    report.novicePoolStats?.let {
+                        PoolStatCard(poolLabel = "新手池", stats = it)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                     report.chronicledPoolStats?.let {
                         PoolStatCard(poolLabel = "集录池", stats = it)
                         Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    report.stellarPoolStats?.let {
+                        PoolStatCard(poolLabel = "千星奇域", stats = it)
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))

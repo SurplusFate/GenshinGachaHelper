@@ -26,9 +26,12 @@ data class HomeUiState(
     val uid: String? = null,
     val nickname: String? = null,
     val characterStats: PoolStats? = null,
+    val character2Stats: PoolStats? = null,
     val weaponStats: PoolStats? = null,
     val standardStats: PoolStats? = null,
+    val noviceStats: PoolStats? = null,
     val chronicledStats: PoolStats? = null,
+    val stellarStats: PoolStats? = null,
     val syncState: SyncState = SyncState.Idle,
     val isLoading: Boolean = true
 )
@@ -107,9 +110,12 @@ class HomeViewModel @Inject constructor(
 
         val accountId = account.id
 
-        // 加载各卡池记录并计算统计（包含集录祈愿）
+        // 加载各卡池记录并计算统计（包含角色活动祈愿-2 和集录祈愿）
         val characterRecords = gachaRepository.getRecordsByPool(
             accountId, GachaType.CHARACTER.value
+        )
+        val character2Records = gachaRepository.getRecordsByPool(
+            accountId, GachaType.CHARACTER_2.value
         )
         val weaponRecords = gachaRepository.getRecordsByPool(
             accountId, GachaType.WEAPON.value
@@ -120,9 +126,25 @@ class HomeViewModel @Inject constructor(
         val chronicledRecords = gachaRepository.getRecordsByPool(
             accountId, GachaType.CHRONICLED.value
         )
+        val noviceRecords = gachaRepository.getRecordsByPool(
+            accountId, GachaType.NOVICE.value
+        )
+        val stellarRecords = gachaRepository.getRecordsByPool(
+            accountId, GachaType.STELLAR.value
+        )
 
         val characterStats = if (characterRecords.isNotEmpty()) {
-            statsCalculator.calculatePoolStats(characterRecords, GachaType.CHARACTER.value)
+            statsCalculator.calculatePoolStats(
+                characterRecords, GachaType.CHARACTER.value,
+                sharedPityRecords = character2Records
+            )
+        } else null
+
+        val character2Stats = if (character2Records.isNotEmpty()) {
+            statsCalculator.calculatePoolStats(
+                character2Records, GachaType.CHARACTER_2.value,
+                sharedPityRecords = characterRecords
+            )
         } else null
 
         val weaponStats = if (weaponRecords.isNotEmpty()) {
@@ -137,11 +159,22 @@ class HomeViewModel @Inject constructor(
             statsCalculator.calculatePoolStats(chronicledRecords, GachaType.CHRONICLED.value)
         } else null
 
+        val noviceStats = if (noviceRecords.isNotEmpty()) {
+            statsCalculator.calculatePoolStats(noviceRecords, GachaType.NOVICE.value)
+        } else null
+
+        val stellarStats = if (stellarRecords.isNotEmpty()) {
+            statsCalculator.calculatePoolStats(stellarRecords, GachaType.STELLAR.value)
+        } else null
+
         _uiState.value = _uiState.value.copy(
             characterStats = characterStats,
+            character2Stats = character2Stats,
             weaponStats = weaponStats,
             standardStats = standardStats,
+            noviceStats = noviceStats,
             chronicledStats = chronicledStats,
+            stellarStats = stellarStats,
             isLoading = false
         )
     }

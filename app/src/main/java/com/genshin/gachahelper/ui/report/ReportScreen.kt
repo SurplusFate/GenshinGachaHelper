@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -55,6 +57,7 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
                         .padding(16.dp)
                 ) {
                     // 报告标题
@@ -109,12 +112,28 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                         MiniPoolReport("角色池", stats)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
+                    report.character2PoolStats?.let { stats ->
+                        MiniPoolReport("角色池-2", stats)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                     report.weaponPoolStats?.let { stats ->
                         MiniPoolReport("武器池", stats)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                     report.standardPoolStats?.let { stats ->
                         MiniPoolReport("常驻池", stats)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    report.novicePoolStats?.let { stats ->
+                        MiniPoolReport("新手池", stats)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    report.chronicledPoolStats?.let { stats ->
+                        MiniPoolReport("集录池", stats)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    report.stellarPoolStats?.let { stats ->
+                        MiniPoolReport("千星奇域", stats)
                     }
 
                     Spacer(modifier = Modifier.weight(1f))

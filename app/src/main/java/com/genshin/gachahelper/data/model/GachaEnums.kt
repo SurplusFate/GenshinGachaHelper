@@ -5,10 +5,12 @@ package com.genshin.gachahelper.data.model
  */
 enum class GachaType(val value: Int, val displayName: String) {
     CHARACTER(301, "角色活动祈愿"),
+    CHARACTER_2(400, "角色活动祈愿-2"),
     WEAPON(302, "武器活动祈愿"),
     STANDARD(200, "常驻祈愿"),
     NOVICE(100, "新手祈愿"),
-    CHRONICLED(500, "集录祈愿");
+    CHRONICLED(500, "集录祈愿"),
+    STELLAR(600, "千星奇域");
 
     companion object {
         fun fromValue(value: Int): GachaType {

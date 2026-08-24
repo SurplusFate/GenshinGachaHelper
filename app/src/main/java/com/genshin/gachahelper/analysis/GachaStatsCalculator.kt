@@ -15,9 +15,12 @@ class GachaStatsCalculator @Inject constructor() {
     companion object {
         // 保底上限
         private const val CHARACTER_PITY_CEILING = 90
+        private const val CHARACTER_2_PITY_CEILING = 90
         private const val WEAPON_PITY_CEILING = 80
         private const val STANDARD_PITY_CEILING = 90
+        private const val NOVICE_PITY_CEILING = 90
         private const val CHRONICLED_PITY_CEILING = 90
+        private const val STELLAR_PITY_CEILING = 90
 
         /**
          * 常驻五星角色列表（角色池出这些 = 歪了 50/50）
@@ -37,7 +40,8 @@ class GachaStatsCalculator @Inject constructor() {
     fun calculatePoolStats(
         records: List<GachaRecordEntity>,
         poolType: Int,
-        upItems: List<String> = emptyList()
+        upItems: List<String> = emptyList(),
+        sharedPityRecords: List<GachaRecordEntity> = emptyList()
     ): PoolStats {
         // orderNumber 是 String，必须转 Long 排序，否则字典序错误（"999" > "2376"）
         val sortedRecords = records.sortedByDescending { it.orderNumber.toLongOrNull() ?: 0L }
@@ -50,8 +54,15 @@ class GachaStatsCalculator @Inject constructor() {
         val fourStarCount = sortedRecords.count { it.rarity == 4 }
         val threeStarCount = sortedRecords.count { it.rarity == 3 }
 
-        // 当前垫抽：从最新记录向前找最近一次五星
-        val currentPity = calculateCurrentPity(sortedRecords)
+        // 当前垫抽：角色池301和400共享保底
+        // 如果提供了 sharedPityRecords（另一个共享池的记录），则合并后计算垫抽
+        val currentPity = if (sharedPityRecords.isNotEmpty()) {
+            val mergedForPity = (records + sharedPityRecords)
+                .sortedByDescending { it.orderNumber.toLongOrNull() ?: 0L }
+            calculateCurrentPity(mergedForPity)
+        } else {
+            calculateCurrentPity(sortedRecords)
+        }
 
         // 最近一个五星
         val lastFiveStar = fiveStarRecords.firstOrNull()
@@ -67,8 +78,8 @@ class GachaStatsCalculator @Inject constructor() {
         val minPulls = intervals.minOrNull() ?: 0
         val maxPulls = intervals.maxOrNull() ?: 0
 
-        // UP 率计算：角色池中，非常驻五星 = UP 角色（赢了 50/50 或大保底）
-        val upFiveStars = if (poolType == GachaType.CHARACTER.value) {
+        // UP 率计算：角色池及角色池-2中，非常驻五星 = UP 角色（赢了 50/50 或大保底）
+        val upFiveStars = if (poolType == GachaType.CHARACTER.value || poolType == GachaType.CHARACTER_2.value) {
             fiveStarRecords.count { it.itemName !in STANDARD_FIVE_STAR_CHARACTERS }
         } else {
             fiveStarRecords.size
@@ -151,9 +162,12 @@ class GachaStatsCalculator @Inject constructor() {
     fun getPityCeiling(poolType: Int): Int {
         return when (poolType) {
             GachaType.CHARACTER.value -> CHARACTER_PITY_CEILING
+            GachaType.CHARACTER_2.value -> CHARACTER_2_PITY_CEILING
             GachaType.WEAPON.value -> WEAPON_PITY_CEILING
             GachaType.STANDARD.value -> STANDARD_PITY_CEILING
+            GachaType.NOVICE.value -> NOVICE_PITY_CEILING
             GachaType.CHRONICLED.value -> CHRONICLED_PITY_CEILING
+            GachaType.STELLAR.value -> STELLAR_PITY_CEILING
             else -> CHARACTER_PITY_CEILING
         }
     }
@@ -163,12 +177,26 @@ class GachaStatsCalculator @Inject constructor() {
      */
     fun generateReport(
         characterRecords: List<GachaRecordEntity>,
+        character2Records: List<GachaRecordEntity> = emptyList(),
         weaponRecords: List<GachaRecordEntity>,
         standardRecords: List<GachaRecordEntity>,
-        chronicledRecords: List<GachaRecordEntity> = emptyList()
+        noviceRecords: List<GachaRecordEntity> = emptyList(),
+        chronicledRecords: List<GachaRecordEntity> = emptyList(),
+        stellarRecords: List<GachaRecordEntity> = emptyList()
     ): GachaReport {
+        // 角色池301和400共享保底，计算时互相传入对方的记录
         val characterStats = if (characterRecords.isNotEmpty()) {
-            calculatePoolStats(characterRecords, GachaType.CHARACTER.value)
+            calculatePoolStats(
+                characterRecords, GachaType.CHARACTER.value,
+                sharedPityRecords = character2Records
+            )
+        } else null
+
+        val character2Stats = if (character2Records.isNotEmpty()) {
+            calculatePoolStats(
+                character2Records, GachaType.CHARACTER_2.value,
+                sharedPityRecords = characterRecords
+            )
         } else null
 
         val weaponStats = if (weaponRecords.isNotEmpty()) {
@@ -179,19 +207,36 @@ class GachaStatsCalculator @Inject constructor() {
             calculatePoolStats(standardRecords, GachaType.STANDARD.value)
         } else null
 
+        val noviceStats = if (noviceRecords.isNotEmpty()) {
+            calculatePoolStats(noviceRecords, GachaType.NOVICE.value)
+        } else null
+
         val chronicledStats = if (chronicledRecords.isNotEmpty()) {
             calculatePoolStats(chronicledRecords, GachaType.CHRONICLED.value)
         } else null
 
-        val allRecords = characterRecords + weaponRecords + standardRecords + chronicledRecords
+        val stellarStats = if (stellarRecords.isNotEmpty()) {
+            calculatePoolStats(stellarRecords, GachaType.STELLAR.value)
+        } else null
+
+        // 所有记录
+        val allRecords = characterRecords + character2Records + weaponRecords +
+            standardRecords + noviceRecords + chronicledRecords + stellarRecords
         val allFiveStars = allRecords.filter { it.rarity == 5 }
         val totalPulls = allRecords.size
 
+        // 五星间隔：角色池301和400共享保底，必须合并后计算间隔
+        // 否则会出现184等超过保底上限(90)的不合理间隔
+        val mergedCharacterRecords = characterRecords + character2Records
+        val mergedCharacterIntervals = calculateFiveStarIntervals(mergedCharacterRecords)
+
         val allIntervals = buildList {
-            if (characterStats != null) addAll(characterStats.fiveStarIntervals)
+            addAll(mergedCharacterIntervals)
             if (weaponStats != null) addAll(weaponStats.fiveStarIntervals)
             if (standardStats != null) addAll(standardStats.fiveStarIntervals)
+            if (noviceStats != null) addAll(noviceStats.fiveStarIntervals)
             if (chronicledStats != null) addAll(chronicledStats.fiveStarIntervals)
+            if (stellarStats != null) addAll(stellarStats.fiveStarIntervals)
         }
 
         val avgPulls = if (allFiveStars.isNotEmpty()) {
@@ -201,7 +246,12 @@ class GachaStatsCalculator @Inject constructor() {
         val bestLuck = allIntervals.minOrNull() ?: 0
         val worstLuck = allIntervals.maxOrNull() ?: 0
 
-        val upRate = characterStats?.upRate ?: 0.0
+        // UP 率：综合角色池和角色池-2
+        val totalUpFiveStars = (characterStats?.upFiveStarCount ?: 0) + (character2Stats?.upFiveStarCount ?: 0)
+        val totalCharFiveStars = (characterStats?.fiveStarCount ?: 0) + (character2Stats?.fiveStarCount ?: 0)
+        val upRate = if (totalCharFiveStars > 0) {
+            totalUpFiveStars.toDouble() / totalCharFiveStars
+        } else 0.0
 
         return GachaReport(
             totalPulls = totalPulls,
@@ -211,9 +261,12 @@ class GachaStatsCalculator @Inject constructor() {
             worstLuck = worstLuck,
             upSuccessRate = upRate,
             characterPoolStats = characterStats,
+            character2PoolStats = character2Stats,
             weaponPoolStats = weaponStats,
             standardPoolStats = standardStats,
-            chronicledPoolStats = chronicledStats
+            novicePoolStats = noviceStats,
+            chronicledPoolStats = chronicledStats,
+            stellarPoolStats = stellarStats
         )
     }
 }

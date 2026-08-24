@@ -184,6 +184,13 @@ fun HomeScreen(
             } ?: EmptyPoolCard("角色池")
         }
 
+        // 角色池-2
+        item {
+            uiState.character2Stats?.let {
+                PoolCard(poolStats = it, poolLabel = "角色池-2")
+            } ?: EmptyPoolCard("角色池-2")
+        }
+
         // 武器池
         item {
             uiState.weaponStats?.let {
@@ -198,11 +205,25 @@ fun HomeScreen(
             } ?: EmptyPoolCard("常驻池")
         }
 
+        // 新手池
+        item {
+            uiState.noviceStats?.let {
+                PoolCard(poolStats = it, poolLabel = "新手池")
+            } ?: EmptyPoolCard("新手池")
+        }
+
         // 集录池
         item {
             uiState.chronicledStats?.let {
                 PoolCard(poolStats = it, poolLabel = "集录池")
             } ?: EmptyPoolCard("集录池")
+        }
+
+        // 千星奇域
+        item {
+            uiState.stellarStats?.let {
+                PoolCard(poolStats = it, poolLabel = "千星奇域")
+            } ?: EmptyPoolCard("千星奇域")
         }
 
         item { Spacer(modifier = Modifier.height(16.dp)) }

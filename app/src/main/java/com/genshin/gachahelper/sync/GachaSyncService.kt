@@ -92,9 +92,12 @@ class GachaSyncService @Inject constructor(
             // 5. 按卡池同步
             val pools = listOf(
                 GachaType.CHARACTER,
+                GachaType.CHARACTER_2,
                 GachaType.WEAPON,
                 GachaType.STANDARD,
-                GachaType.CHRONICLED
+                GachaType.NOVICE,
+                GachaType.CHRONICLED,
+                GachaType.STELLAR
             )
 
             var totalNew = 0

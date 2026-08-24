@@ -10,6 +10,15 @@ android {
     namespace = "com.genshin.gachahelper"
     compileSdk = 34
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("/data/user/work/release.keystore")
+            storePassword = "123456"
+            keyAlias = "gacha-release"
+            keyPassword = "123456"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.genshin.gachahelper"
         minSdk = 26
@@ -26,6 +35,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

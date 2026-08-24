@@ -5,6 +5,7 @@ import android.net.Uri
 import com.genshin.gachahelper.data.local.entity.AccountEntity
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
+import com.genshin.gachahelper.data.model.GachaItemDatabase
 import com.genshin.gachahelper.data.model.ItemType
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.google.gson.JsonObject
@@ -147,14 +148,39 @@ class GachaDataImporter @Inject constructor(
             val accountId = account?.id
                 ?: return@withContext ImportResult(false, 0, 0, effectiveUid, "创建账号失败")
 
-            // 解析并插入记录
+            // 两遍扫描：第一遍构建 name→rarity 映射（用有 rank_type 的记录）
+            val rarityMap = mutableMapOf<String, Int>()
+            for (item in listArray) {
+                try {
+                    val obj = item.asJsonObject
+                    val name = obj.get("name")?.asString ?: continue
+                    val rankStr = obj.get("rank_type")?.asString
+                        ?: obj.get("rarity")?.asString
+                        ?: obj.get("rank")?.asString
+                        ?: null
+                    if (rankStr != null) {
+                        val r = when {
+                            rankStr.contains("5") -> 5
+                            rankStr.contains("4") -> 4
+                            rankStr.contains("3") -> 3
+                            rankStr.toIntOrNull() != null -> rankStr.toInt()
+                            else -> 0
+                        }
+                        if (r > 0) {
+                            rarityMap[name] = r
+                        }
+                    }
+                } catch (_: Exception) { }
+            }
+
+            // 第二遍：解析每条记录，rank_type 缺失时按 rarityMap → GachaItemDatabase 顺序推断
             val records = mutableListOf<GachaRecordEntity>()
             var skipped = 0
 
             for (item in listArray) {
                 try {
                     val obj = item.asJsonObject
-                    val record = parseRecord(obj, accountId)
+                    val record = parseRecord(obj, accountId, rarityMap)
                     if (record != null) {
                         records.add(record)
                     } else {
@@ -193,13 +219,18 @@ class GachaDataImporter @Inject constructor(
 
     /**
      * 解析单条 UIGF 记录
+     * @param rarityMap 从有 rank_type 的记录构建的 name→rarity 映射（第一遍扫描结果）
      */
-    private fun parseRecord(obj: JsonObject, accountId: Long): GachaRecordEntity? {
-        // gacha_type: 必需，301/302/200/100/500
-        val gachaType = obj.get("gacha_type")?.asInt ?: return null
+    private fun parseRecord(obj: JsonObject, accountId: Long, rarityMap: Map<String, Int>): GachaRecordEntity? {
+        // gacha_type: 必需，支持 301/400/302/200/100/500
+        // 注意：UIGF v2.2 文件中 gacha_type 可能是字符串（如 "400"），也可能带 uigf_gacha_type 字段
+        // 对于 gacha_type=400（角色活动祈愿-2），保留原始类型，不用 uigf_gacha_type 覆盖
+        val gachaType = obj.get("gacha_type")?.let {
+            try { it.asInt } catch (_: Exception) { it.asString.toIntOrNull() }
+        } ?: return null
 
-        // 验证是否为有效的卡池类型
-        val validTypes = setOf(301, 302, 200, 100, 500)
+        // 验证是否为有效的卡池类型（400 = 角色活动祈愿-2）
+        val validTypes = setOf(301, 400, 302, 200, 100, 500, 600)
         if (gachaType !in validTypes) return null
 
         // time: 必需
@@ -218,17 +249,25 @@ class GachaDataImporter @Inject constructor(
             else -> ItemType.OTHER.value
         }
 
-        // rank_type: 可选，5/4/3
+        // rank_type: 可选，5/4/3。缺失时根据物品名称推断
         val rankStr = obj.get("rank_type")?.asString
             ?: obj.get("rarity")?.asString
             ?: obj.get("rank")?.asString
-            ?: "3"
-        val rarity = when {
-            rankStr.contains("5") -> 5
-            rankStr.contains("4") -> 4
-            rankStr.contains("3") -> 3
-            rankStr.toIntOrNull() != null -> rankStr.toInt()
-            else -> 3
+            ?: null
+
+        val rarity = if (rankStr != null) {
+            // rank_type 存在时直接使用
+            when {
+                rankStr.contains("5") -> 5
+                rankStr.contains("4") -> 4
+                rankStr.contains("3") -> 3
+                rankStr.toIntOrNull() != null -> rankStr.toInt()
+                else -> 3
+            }
+        } else {
+            // rank_type 缺失：优先查 rarityMap（同文件中其他记录提供了该物品的稀有度）
+            // 其次用 GachaItemDatabase 根据物品名称推断
+            rarityMap[itemName] ?: GachaItemDatabase.inferRarity(itemName, itemTypeStr)
         }
 
         // id / orderNumber: 必需（去重关键）
@@ -257,7 +296,7 @@ class GachaDataImporter @Inject constructor(
                 ?: return@withContext "{\"info\":{},\"list\":[]}"
 
             val allRecords = mutableListOf<GachaRecordEntity>()
-            for (pool in listOf(GachaType.CHARACTER, GachaType.WEAPON, GachaType.STANDARD, GachaType.NOVICE, GachaType.CHRONICLED)) {
+            for (pool in listOf(GachaType.CHARACTER, GachaType.CHARACTER_2, GachaType.WEAPON, GachaType.STANDARD, GachaType.NOVICE, GachaType.CHRONICLED, GachaType.STELLAR)) {
                 allRecords.addAll(gachaRepository.getRecordsByPool(account.id, pool.value))
             }
 

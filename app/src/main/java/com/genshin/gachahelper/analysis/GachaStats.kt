@@ -36,7 +36,10 @@ data class GachaReport(
     val worstLuck: Int,   // 最多抽数出金
     val upSuccessRate: Double,
     val characterPoolStats: PoolStats?,
+    val character2PoolStats: PoolStats?,
     val weaponPoolStats: PoolStats?,
     val standardPoolStats: PoolStats?,
-    val chronicledPoolStats: PoolStats?
+    val novicePoolStats: PoolStats?,
+    val chronicledPoolStats: PoolStats?,
+    val stellarPoolStats: PoolStats?
 )
