@@ -103,6 +103,57 @@ gradle assembleDebug
 - [Genshin-bots/gsuid_core](https://github.com/Genshin-bots/gsuid_core) — 扫码登录参考实现
 - [BTMuli/TeyvatGuide](https://github.com/BTMuli/TeyvatGuide) — Token 管理参考
 
+## 迭代记录
+
+记录本仓库的代码审查与修复轮次，便于回溯演进过程。
+
+### 2026-08-24 · 全局刷新机制接线修复（commit `f7442cb`）
+
+**问题**：上一提交 `d1f266c` 引入 `SessionEventBus`，但 `DataSynced` 事件从未被 emit，三个 ViewModel 中的对应 `when` 分支是死代码；实际刷新依赖各 ViewModel 直接 `collect { syncService.syncState }` 的旁路，与提交描述不符。
+
+**修复**：
+1. `GachaSyncService` 注入 `SessionEventBus`，同步成功时 `emit(DataSynced)`
+2. `SessionEventBus.emit` 改为 `suspend`，避免 `extraBufferCapacity=4` 溢出时静默丢弃 `LogoutCompleted`/`DataCleared` 等关键事件
+3. `HomeViewModel` 移除 `SyncState.Success` 旁路 `loadData()`，`syncState.collect` 仅保留用于 UI 同步进度展示
+4. `StatsViewModel` 移除 `syncService` 注入与 `syncState.collect`，同步刷新完全由事件总线驱动
+5. 删除从未被 emit 的 `SessionEvent.Refresh` 及所有引用它的分支
+
+### 2026-08-24 · 全量代码审查（未提交，仅记录待办）
+
+针对全代码库做了一次完整审查，记录需要后续处理的问题，按严重程度分组：
+
+**严重（安全 / 数据丢失）**
+- `AndroidManifest.xml` 设 `allowBackup="true"`，且 `AuthRepository` 把 `stoken`/`cookie_token`/`ltoken` 明文存进 DataStore Preferences —— root 设备或 `adb backup` 可读出全部米游社凭证。应改 `allowBackup="false"` 并迁移到 EncryptedDataStore / Tink。
+- `DatabaseModule` 使用 `fallbackToDestructiveMigration()`，未来 schema 变更会静默清空全部抽卡历史；且 `exportSchema=false` 无法审计演进。应提前定义 `Migration` 路径并设 `exportSchema=true`。
+- release 构建 `isMinifyEnabled=false`，`DsSigner` 中 `LK2`/`X4`/`X6`/`K2`/`PROD` 等 salt 直接硬编码在源码，反编译即可见。release 应开启 R8 shrink/obfuscation，并考虑把 salt 移到 native。
+- `MainActivity` 的 `content:// + application/json` VIEW intent-filter 完全开放，任意应用可塞 JSON 触发 UIGF 导入，存在伪造数据风险。建议移除或仅走 `ACTION_OPEN_DOCUMENT`。
+
+**重要（正确性 / 稳健性）**
+- `AuthViewModel` 把 token 片段、原始响应、stack trace 直接塞进 `debugInfo`，截图或崩溃采集会泄露凭证。生产构建应关闭或脱敏。
+- `GachaApiClient.logError` 把含 `authkey`/`uid` 的响应体写入 `filesDir/errors/`，无大小上限、无清理机制。
+- `GachaSyncService` 用 `Thread.sleep(300)` 而非 `delay`，阻塞 IO 线程。
+- `GachaApiClient.buildPostBody` 与 `MihoyoApiService` 多处字符串模板拼 JSON / URL 未转义，存在 JSON 破坏与字段注入风险。应统一用 `JsonObject` + `HttpUrl.Builder`。
+- `MihoyoApiService` 的 OkHttpClient `followRedirects(true)`，认证请求带 Cookie 时可能跨域泄露。应设 `false`。
+- `GachaResponseParser.parseRarity` 用 `value.contains("5")` 判断星级，`"15"`/`"S5"` 会被误识别为 5 星。应精确匹配。
+- `AuthViewModel` 方案 2/3 把 `ltoken`/`cookie_token` 当作 `stoken` 存储，后续请求会带错误值。应禁用或明确标 TODO。
+- 二维码轮询 `while (isActive) { delay(2000) }` 无最大次数 / 超时上限，仅依赖服务端返回 `-106`。
+- `GachaSyncService.syncAll` 的"读-判断-写"非原子，并发同步可能双进。应改 `Mutex.tryLock()`。
+
+**一般（架构 / 可维护性）**
+- 两个 `OkHttpClient` 不共享连接池，应抽成 Hilt 单一 `@Singleton`。
+- `AuthRepository` 每个字段单独 `data.first()`，`buildCookieString` 连读 5 次 DataStore。应一次性取 `prefs`。
+- `DsSigner` 既是 `object` 又标 `@Singleton` 冗余；`APP_VERSION="2.71.1"` 硬编码，过期会让全部请求失败且无运行时检测。
+- `ConfigStore` 配置解析失败静默回退默认，用户无感知。应 log 并暴露 error state。
+- 引入 `kotlinx-serialization-json` 但全程用 Gson，多余依赖。
+
+**构建 / 测试**
+- release 无签名配置，无法发布。
+- `proguard-rules.pro` 未 keep `GachaRecordEntity`，一旦开启 minify 会立即出问题。
+- 完全无单元测试，`GachaStatsCalculator` 等纯逻辑模块尤其值得补测。
+- `targetSdk = 34` 在 2026 年偏旧。
+
+> 说明：本轮审查仅记录问题清单，未做代码改动。后续可按"严重"组优先级逐项修复并单独提交。
+
 ## License
 
 MIT
