@@ -1,33 +1,27 @@
 package com.genshin.gachahelper.remote
 
-import com.genshin.gachahelper.config.model.ApiConfig
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaItemDatabase
-import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.model.ItemType
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 接口响应解析器
- * 根据配置文件中的 mapping 字段，将接口返回的 JSON 解析为统一的 GachaRecordEntity 列表
+ * 接口响应解析器（硬编码米游社官方响应结构）
+ *
+ * 之前从 ConfigStore.ApiConfig.mapping 动态读取字段路径，但官方响应结构是固定的：
+ *   retcode/message/data.list → [{ name, item_type, rank_type, time, id }]
+ * 自定义配置对解析行为没有任何可观察效果。改为直接硬编码，减少间接层与空安全复杂度。
  */
 @Singleton
 class GachaResponseParser @Inject constructor() {
 
-    /**
-     * 解析接口返回的 JSON 字符串
-     * @param jsonString 原始 JSON 响应
-     * @param config 接口配置（包含 mapping 信息）
-     * @param accountId 关联的账号 ID
-     * @param poolType 卡池类型
-     * @return 解析出的记录列表 + 是否还有下一页
-     */
+    /** 解析米游社官方 getGachaLog 响应 */
     fun parseResponse(
         jsonString: String,
-        config: ApiConfig,
         accountId: Long,
         poolType: Int
     ): ParseResult {
@@ -41,20 +35,20 @@ class GachaResponseParser @Inject constructor() {
                 return ParseResult.Error("接口返回错误: $message (code: $retcode)")
             }
 
-            // 按 listPath 找到数据列表
-            val listElement = navigatePath(json, config.mapping.listPath)
-            val listArray = listElement?.asJsonArray
-                ?: return ParseResult.Error("无法找到数据列表路径: ${config.mapping.listPath}")
+            // data.list 路径
+            val data = json.getAsJsonObject("data")
+                ?: return ParseResult.Error("响应缺少 data")
+            val listArray: JsonArray = data.getAsJsonArray("list")
+                ?: return ParseResult.Error("响应缺少 data.list")
 
             val records = mutableListOf<GachaRecordEntity>()
-            val mapping = config.mapping
 
             for (item in listArray) {
                 val itemObj = item.asJsonObject
                 try {
-                    val itemName = getStringValue(itemObj, mapping.itemName)
-                    val itemTypeStr = getStringValue(itemObj, mapping.itemType)
-                    val rankStr = getStringValue(itemObj, mapping.rarity)
+                    val itemName = getString(itemObj, "name")
+                    val itemTypeStr = getString(itemObj, "item_type")
+                    val rankStr = getString(itemObj, "rank_type")
 
                     // rank_type 缺失时根据物品名称推断
                     val rarity = if (rankStr.isNotBlank()) {
@@ -63,29 +57,24 @@ class GachaResponseParser @Inject constructor() {
                         GachaItemDatabase.inferRarity(itemName, itemTypeStr)
                     }
 
-                    val record = GachaRecordEntity(
-                        accountId = accountId,
-                        poolType = poolType,
-                        itemName = itemName,
-                        itemType = parseItemType(itemTypeStr),
-                        rarity = rarity,
-                        time = getStringValue(itemObj, mapping.time),
-                        orderNumber = getStringValue(itemObj, mapping.orderNumber)
+                    records.add(
+                        GachaRecordEntity(
+                            accountId = accountId,
+                            poolType = poolType,
+                            itemName = itemName,
+                            itemType = parseItemType(itemTypeStr),
+                            rarity = rarity,
+                            time = getString(itemObj, "time"),
+                            orderNumber = getString(itemObj, "id")
+                        )
                     )
-                    records.add(record)
                 } catch (_: Exception) {
                     // 单条解析失败不影响整体
                 }
             }
 
-            // 判断是否还有下一页
-            val hasMore = if (config.pagination.stopWhenEmpty) {
-                records.isNotEmpty()
-            } else {
-                config.pagination.hasMoreField?.let { field ->
-                    navigatePath(json, field)?.asBoolean ?: false
-                } ?: records.isNotEmpty()
-            }
+            // 官方 API 返回 list 为空时即无下一页（对应 stopWhenEmpty=true）
+            val hasMore = records.isNotEmpty()
 
             ParseResult.Success(records, hasMore)
         } catch (e: Exception) {
@@ -93,23 +82,7 @@ class GachaResponseParser @Inject constructor() {
         }
     }
 
-    /**
-     * 按点分路径导航 JSON 对象
-     */
-    private fun navigatePath(json: JsonObject, path: String): com.google.gson.JsonElement? {
-        val parts = path.split(".")
-        var current: com.google.gson.JsonElement = json
-        for (part in parts) {
-            if (current is JsonObject) {
-                current = current.get(part) ?: return null
-            } else {
-                return null
-            }
-        }
-        return current
-    }
-
-    private fun getStringValue(obj: JsonObject, key: String): String {
+    private fun getString(obj: JsonObject, key: String): String {
         val element = obj.get(key)
         return element?.asString ?: ""
     }
@@ -117,12 +90,14 @@ class GachaResponseParser @Inject constructor() {
     private fun parseRarity(value: String): Int {
         // 支持多种格式："5", "5星", "S" 等
         return when {
-            value.contains("5") -> 5
-            value.contains("4") -> 4
-            value.contains("3") -> 3
             value.equals("S", ignoreCase = true) -> 5
             value.equals("A", ignoreCase = true) -> 4
             value.equals("B", ignoreCase = true) -> 3
+            // 先尝试精确数值匹配，避免 "15" / "S5" 被误判为 5 星
+            value.matches(Regex("\\d+")) -> value.toIntOrNull()?.coerceIn(3, 5) ?: 3
+            value.contains("5") -> 5
+            value.contains("4") -> 4
+            value.contains("3") -> 3
             else -> value.toIntOrNull() ?: 3
         }
     }

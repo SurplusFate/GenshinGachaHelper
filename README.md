@@ -116,6 +116,56 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-24 · 删除接口配置功能 + 新增白天/夜间主题（commit 待提交）
+
+**删除接口配置功能**
+
+原先代码存在一套"可自定义 API 配置"的链路：`default_api_config.json`
+→ `ConfigStore` / `ConfigParser` / `ConfigImporter` / `ApiConfig` model →
+SettingsScreen 的「导入配置 / 恢复默认」按钮。而实际同步链路中 Mihoyo 官方抽卡
+API（URL/参数/响应 mapping）是固定的，`GachaApiClient`、`GachaResponseParser`
+虽然把 config 当作形参，但配置里的字段（`url = getGachaLog`、`pageSize=20`、
+`listPath = data.list`、`item_name = name` 等）是硬编码值，用户导入自定义 JSON
+也不会影响对米游社官方接口的请求，所以这套功能**没有任何可观察效果**。
+
+本次改动：
+- 删除 `app/src/main/assets/default_api_config.json`
+- 删除整个 `config/` 模块（store / importer / parser / model 共 5 个文件）
+- `GachaApiClient.fetchGachaPage(...)` 不再接收 `ApiConfig` 形参，URL/参数直接
+  按米游社官方 API 写死：`BASE_URL = public-operation-hk4e.mihoyo.com/.../getGachaLog`，
+  `PAGE_SIZE = 20`，GET，query 参数按官方命名（`authkey`/`region`/`gacha_type`/
+  `page`/`size`/`end_id` + 固定项 `authkey_ver=1 sign_type=2 auth_appid=webview_gacha`
+  `lang=zh-cn device_type=mobile plat_type=android`），`authkey` 做 URL 编码
+- `GachaResponseParser.parseResponse(...)` 不再接收 config 形参，mapping 直接写死：
+  `data.list` 路径下取 `name / item_type / rank_type / time / id`；
+  `parseRarity` 同步修复旧 bug（`value.contains("5")` 会误判 `"15"`/`"S5"` 为 5 星）：
+  改为 S/A/B 优先 → 纯数字精确匹配（并 coerceIn 3..5）→ 最后走 contains 兜底
+- `GachaSyncService` 去掉 `ConfigStore` 注入，`pageSize` 改 `GachaApiClient.PAGE_SIZE`
+- `SettingsViewModel` 去掉 `configStore` / `configImporter` 注入，删除
+  `importConfig` / `resetConfig` 方法，`SettingsUiState` 去掉 `configVersion` 与
+  `configUrl` 字段
+- `SettingsScreen` 删除「接口配置」Section、配置文件 Picker 与"恢复默认"对话框
+
+审查清单"重要"组中 `parseRarity contains("5")` 误判 bug 也一并修复 ✓。
+
+**新增白天/夜间模式主题适配**
+
+新增"跟随系统 / 白天 / 夜间"三选一主题，用户选择持久化并**实时生效**（无需退出重进）：
+
+- `ThemeMode` 枚举（`FOLLOW_SYSTEM(0) / LIGHT(1) / DARK(2)`）
+- `ThemeRepository`：通过独立的 `Context.settingsDataStore`（`settings_store`）
+  读写用户偏好，暴露 `themeModeFlow` 与 `suspend setThemeMode(...)`
+- `GenshinGachaHelperTheme(themeMode, systemDark)`：`FOLLOW_SYSTEM` 时用
+  Compose 提供的 `isSystemInDarkTheme()`，`LIGHT/DARK` 则强制选对应的 ColorScheme
+- `MainActivity`：注入 `ThemeRepository`，通过 `collectAsStateWithLifecycle`
+  把 Flow 交给 `GenshinGachaHelperTheme`，用户点击切换主题即通过 Recomposition
+  自动全局应用
+- `SettingsScreen`：在原来「接口配置」的位置替换为「主题设置」三选一 RadioGroup，
+  `viewModel.themeMode` 读取当前值，`viewModel.setThemeMode(...)` 写回 DataStore
+
+未做：AppCompat delegate night mode（非 Compose 场景），但目前 App 所有页面均
+Jetpack Compose，MaterialTheme 的 colorScheme 已能覆盖全部 UI。
+
 ### 2026-08-24 · v1.1.1 导出文件命名规范化（commit `4d4d8cb`）
 
 **问题**：导出文件命名为 `UIGF_<uid>_<毫秒时间戳>.json`，时间戳不直观，无法一眼看出导出时间。
@@ -170,7 +220,6 @@ gradle assembleDebug
 #### 7. 正式签名 Release 构建
 
 生成 RSA 2048 位、有效期 100 年的正式签名 keystore，配置到 `build.gradle.kts` 的 `signingConfigs.release`，版本号升至 `1.1.0 (versionCode=2)`。
-
 
 ### 2026-08-24 · 修复验证码/密码登录：与扫码凭证等价（commit `93a5875`）
 
@@ -273,7 +322,7 @@ minify 关闭、salt 裸露、JSON 拼接未转义等）仍待办。
 - ~~`GachaSyncService` 用 `Thread.sleep(300)` 而非 `delay`，阻塞 IO 线程。~~ ✓ 已在性能优化轮修复
 - `GachaApiClient.buildPostBody` 与 `MihoyoApiService` 多处字符串模板拼 JSON / URL 未转义，存在 JSON 破坏与字段注入风险。应统一用 `JsonObject` + `HttpUrl.Builder`。
 - `MihoyoApiService` 的 OkHttpClient `followRedirects(true)`，认证请求带 Cookie 时可能跨域泄露。应设 `false`。
-- `GachaResponseParser.parseRarity` 用 `value.contains("5")` 判断星级，`"15"`/`"S5"` 会被误识别为 5 星。应精确匹配。
+- ~~`GachaResponseParser.parseRarity` 用 `value.contains("5")` 判断星级，`"15"`/`"S5"` 会被误识别为 5 星。~~ ✓ 已在"删除接口配置 + 新增主题"轮修复：精确匹配优先 + coerceIn(3..5) + contains 兜底
 - ~~`AuthViewModel` 方案 2/3 把 `ltoken`/`cookie_token` 当作 `stoken` 存储，后续请求会带错误值。~~ ✓ 已在"验证码/密码登录等价修复"轮修复：删除方案 2/3，只保留 stoken 直存 与 login_ticket→multiToken 换 stoken 两条路径
 - 二维码轮询 `while (isActive) { delay(2000) }` 无最大次数 / 超时上限，仅依赖服务端返回 `-106`。
 - `GachaSyncService.syncAll` 的"读-判断-写"非原子，并发同步可能双进。应改 `Mutex.tryLock()`。

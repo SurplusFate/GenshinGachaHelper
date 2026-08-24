@@ -5,18 +5,19 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.auth.AuthRepository
-import com.genshin.gachahelper.config.importer.ConfigImporter
-import com.genshin.gachahelper.config.store.ConfigStore
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.sync.GachaDataImporter
+import com.genshin.gachahelper.ui.theme.ThemeMode
+import com.genshin.gachahelper.ui.theme.ThemeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -24,19 +25,16 @@ data class SettingsUiState(
     val isLoggedIn: Boolean = false,
     val uid: String? = null,
     val nickname: String? = null,
-    val configVersion: String = "加载中...",
-    val configUrl: String = "",
     val errorLogCount: Int = 0
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val configStore: ConfigStore,
-    private val configImporter: ConfigImporter,
     private val gachaRepository: GachaRepository,
     private val gachaDataImporter: GachaDataImporter,
     private val sessionEventBus: SessionEventBus,
+    private val themeRepository: ThemeRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -46,10 +44,16 @@ class SettingsViewModel @Inject constructor(
     private val _importMessage = MutableStateFlow<String?>(null)
     val importMessage: StateFlow<String?> = _importMessage.asStateFlow()
 
+    /** 当前主题模式：随系统/白天/夜间 */
+    val themeMode: StateFlow<ThemeMode> = themeRepository.themeModeFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = ThemeMode.FOLLOW_SYSTEM
+        )
+
     init {
-        // 监听全局会话事件：登录/退出/导入/清除后需重新 loadSettings 以刷新登录态与配置显示
-        // 否则用户先访问过 Settings（ViewModel 已 saveState 存活），后续登录/退出后切回
-        // Settings 会看到旧的"未登录/旧 UID"状态，必须重启 App 才刷新。
+        // 监听全局会话事件：登录/退出/导入/清除后需重新 loadSettings
         viewModelScope.launch {
             sessionEventBus.events.collect { event ->
                 when (event) {
@@ -69,39 +73,18 @@ class SettingsViewModel @Inject constructor(
             val loggedIn = authRepository.isLoggedIn()
             val uid = authRepository.getUid()
             val nickname = authRepository.getNickname()
-            val config = configStore.getCurrentConfig()
-
             _uiState.value = SettingsUiState(
                 isLoggedIn = loggedIn,
                 uid = uid,
-                nickname = nickname,
-                configVersion = config.version,
-                configUrl = config.api.url.take(30) + "..."
+                nickname = nickname
             )
         }
     }
 
-    fun importConfig(uri: Uri) {
+    /** 切换主题模式 */
+    fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
-            try {
-                val config = configImporter.importFromUri(uri)
-                _importMessage.value = "导入成功！版本: ${config.version}"
-                loadSettings()
-            } catch (e: Exception) {
-                _importMessage.value = "导入失败: ${e.message}"
-            }
-        }
-    }
-
-    fun resetConfig() {
-        viewModelScope.launch {
-            try {
-                configStore.resetToDefault()
-                _importMessage.value = "已恢复默认配置"
-                loadSettings()
-            } catch (e: Exception) {
-                _importMessage.value = "恢复失败: ${e.message}"
-            }
+            themeRepository.setThemeMode(mode)
         }
     }
 
@@ -189,8 +172,7 @@ class SettingsViewModel @Inject constructor(
                 gachaRepository.deleteAccount(account.id)
             }
             authRepository.logout()
-            // logout 同时删除了账号与全部抽卡数据，需同时通知数据已清除，
-            // 否则仅监听 DataCleared 的逻辑无法被触发（语义上数据确实被清了）。
+            // logout 同时删除了账号与全部抽卡数据，需同时通知数据已清除
             sessionEventBus.emit(SessionEvent.LogoutCompleted)
             sessionEventBus.emit(SessionEvent.DataCleared)
             loadSettings()

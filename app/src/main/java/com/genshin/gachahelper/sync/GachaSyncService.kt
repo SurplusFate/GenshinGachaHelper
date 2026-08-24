@@ -3,7 +3,6 @@ package com.genshin.gachahelper.sync
 import com.genshin.gachahelper.auth.ApiResult
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.auth.MihoyoApiService
-import com.genshin.gachahelper.config.store.ConfigStore
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.local.entity.AccountEntity
@@ -45,7 +44,6 @@ sealed class SyncState {
 class GachaSyncService @Inject constructor(
     private val apiClient: GachaApiClient,
     private val responseParser: GachaResponseParser,
-    private val configStore: ConfigStore,
     private val authRepository: AuthRepository,
     private val mihoyoApi: MihoyoApiService,
     private val gachaRepository: GachaRepository,
@@ -83,13 +81,10 @@ class GachaSyncService @Inject constructor(
                 is ApiResult.Error -> throw IllegalStateException("获取 authkey 失败: ${result.message}")
             }
 
-            // 3. 获取接口配置
-            val config = configStore.getCurrentConfig()
-
-            // 4. 确保账号已存在
+            // 3. 确保账号已存在
             val accountId = ensureAccount(uid, server, nickname)
 
-            // 5. 按卡池同步
+            // 4. 按卡池同步
             val pools = listOf(
                 GachaType.CHARACTER,
                 GachaType.CHARACTER_2,
@@ -105,7 +100,7 @@ class GachaSyncService @Inject constructor(
             for (pool in pools) {
                 _syncState.value = SyncState.Loading("正在同步${pool.displayName}...")
 
-                val result = syncPool(accountId, pool, config, authKey, uid, server)
+                val result = syncPool(accountId, pool, authKey, uid, server)
                 totalNew += result.newCount
                 totalRecords += result.totalCount
 
@@ -116,7 +111,7 @@ class GachaSyncService @Inject constructor(
                 )
             }
 
-            // 6. 更新最后同步时间
+            // 5. 更新最后同步时间
             gachaRepository.updateLastSyncTime(accountId, System.currentTimeMillis())
 
             _syncState.value = SyncState.Success(totalNew, totalRecords)
@@ -134,7 +129,6 @@ class GachaSyncService @Inject constructor(
     private suspend fun syncPool(
         accountId: Long,
         pool: GachaType,
-        config: com.genshin.gachahelper.config.model.ApiConfig,
         authKey: String,
         uid: String,
         server: String
@@ -144,7 +138,7 @@ class GachaSyncService @Inject constructor(
         var totalCount = 0
         var hasMore = true
         var endId = "0"
-        val pageSize = config.pagination.pageSize
+        val pageSize = GachaApiClient.PAGE_SIZE
 
         // 获取本地已有的最大 orderNumber 用于增量判断
         val maxOrderNumber = gachaRepository.getMaxOrderNumber(accountId, pool.value)
@@ -160,14 +154,13 @@ class GachaSyncService @Inject constructor(
                 endId = endId
             )
 
-            val response = apiClient.fetchGachaPage(config, placeholders)
+            val response = apiClient.fetchGachaPage(placeholders)
             if (response.isFailure) {
                 throw response.exceptionOrNull() ?: Exception("请求失败")
             }
 
             val parseResult = responseParser.parseResponse(
                 jsonString = response.getOrThrow(),
-                config = config,
                 accountId = accountId,
                 poolType = pool.value
             )

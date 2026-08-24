@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -27,24 +30,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.genshin.gachahelper.ui.theme.ThemeMode
 
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     val importMessage by viewModel.importMessage.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsState()
     var showClearDataDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
-    var showResetConfigDialog by remember { mutableStateOf(false) }
-
-    // 配置文件选择器
-    val configPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let { viewModel.importConfig(it) }
-    }
 
     // 抽卡数据导入文件选择器
     val gachaDataPickerLauncher = rememberLauncherForActivityResult(
@@ -104,41 +102,27 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             }
         }
 
-        // 接口配置
-        SettingsSection(title = "接口配置") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("当前版本")
-                Text(uiState.configVersion, fontWeight = FontWeight.Medium)
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("接口地址")
-                Text(
-                    uiState.configUrl,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        // 主题设置（替代原无用的接口配置）
+        SettingsSection(title = "主题设置") {
+            Column(Modifier.selectableGroup()) {
+                ThemeModeOption(
+                    label = "跟随系统",
+                    description = "与系统夜间模式保持一致",
+                    selected = themeMode == ThemeMode.FOLLOW_SYSTEM,
+                    onClick = { viewModel.setThemeMode(ThemeMode.FOLLOW_SYSTEM) }
                 )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedButton(
-                onClick = { configPickerLauncher.launch(arrayOf("application/json")) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("导入配置")
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { showResetConfigDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("恢复默认配置")
+                ThemeModeOption(
+                    label = "白天模式",
+                    description = "浅色主题，不受系统设置影响",
+                    selected = themeMode == ThemeMode.LIGHT,
+                    onClick = { viewModel.setThemeMode(ThemeMode.LIGHT) }
+                )
+                ThemeModeOption(
+                    label = "夜间模式",
+                    description = "深色主题，更护眼",
+                    selected = themeMode == ThemeMode.DARK,
+                    onClick = { viewModel.setThemeMode(ThemeMode.DARK) }
+                )
             }
         }
 
@@ -197,17 +181,37 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             onDismiss = { showLogoutDialog = false }
         )
     }
+}
 
-    if (showResetConfigDialog) {
-        ConfirmDialog(
-            title = "恢复默认",
-            message = "确定要恢复到默认接口配置吗？",
-            onConfirm = {
-                viewModel.resetConfig()
-                showResetConfigDialog = false
-            },
-            onDismiss = { showResetConfigDialog = false }
-        )
+/** 三选一主题选项：带 Radio + 标题 + 说明 */
+@Composable
+private fun ThemeModeOption(
+    label: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                onClick = onClick,
+                role = Role.RadioButton
+            )
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.padding(start = 8.dp)) {
+            Text(text = label, fontWeight = FontWeight.Medium)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

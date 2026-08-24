@@ -1,11 +1,9 @@
 package com.genshin.gachahelper.remote
 
 import android.content.Context
-import com.genshin.gachahelper.config.model.ApiConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -15,8 +13,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 抽卡接口客户端
- * 基于配置文件动态构建请求，不硬编码任何 URL 或字段名
+ * 抽卡接口客户端（硬编码米游社官方 getGachaLog API）
+ *
+ * 之前通过 ConfigStore 可自定义 API 配置，但官方抽卡 API URL/参数/响应结构
+ * 是固定的，自定义配置没有任何可观察效果（UI 显示"导入成功"，同步时实际走
+ * 的仍是默认值）。改为直接硬编码官方接口结构，减少一层间接。
  */
 @Singleton
 class GachaApiClient @Inject constructor(
@@ -24,41 +25,31 @@ class GachaApiClient @Inject constructor(
     private val okHttpClient: OkHttpClient
 ) {
 
+    companion object {
+        /** 米游社官方抽卡记录 API */
+        const val BASE_URL =
+            "https://public-operation-hk4e.mihoyo.com/gacha_info/api/getGachaLog"
+
+        /** 每 页大小（官方 API 固定 20） */
+        const val PAGE_SIZE = 20
+    }
+
     /**
      * 发送抽卡记录请求
-     * @param config 接口配置
-     * @param placeholders 占位符替换映射（authkey, uid, page, gacha_type 等）
+     * @param placeholders 占位符替换映射（authkey, uid, region, page, gacha_type, end_id 等）
      * @return 原始 JSON 响应字符串
      */
     suspend fun fetchGachaPage(
-        config: ApiConfig,
         placeholders: Map<String, String>
     ): Result<String> {
         return try {
-            val url = buildUrl(config, placeholders)
-            val requestBuilder = Request.Builder().url(url)
-
-            // 添加请求头
-            config.api.headers.forEach { (key, value) ->
-                requestBuilder.addHeader(key, replacePlaceholders(value, placeholders))
-            }
-
-            // 根据方法构建请求体
-            val request = when (config.api.method.uppercase()) {
-                "POST" -> {
-                    val body = buildPostBody(config, placeholders)
-                    requestBuilder.post(body.toRequestBody())
-                        .addHeader("Content-Type", "application/json")
-                        .build()
-                }
-                else -> requestBuilder.get().build()
-            }
+            val url = buildUrl(placeholders)
+            val request = Request.Builder().url(url).get().build()
 
             val response = okHttpClient.newCall(request).execute()
             val body = response.body?.string() ?: ""
 
             if (!response.isSuccessful) {
-                // 记录错误日志
                 logError(url, response.code, body)
                 Result.failure(Exception("HTTP ${response.code}: ${response.message}"))
             } else {
@@ -70,46 +61,33 @@ class GachaApiClient @Inject constructor(
     }
 
     /**
-     * 构建 GET 请求 URL
+     * 构建 GET 请求 URL。官方 API 固定用 GET，参数名与官方一致。
+     * authkey 含 +/= 等特殊字符，必须 URL 编码。
      */
-    private fun buildUrl(config: ApiConfig, placeholders: Map<String, String>): String {
-        val baseUrl = replacePlaceholders(config.api.url, placeholders)
+    private fun buildUrl(placeholders: Map<String, String>): String {
+        val authkey = placeholders["authkey"] ?: ""
+        val region = placeholders["region"] ?: ""
+        val gachaType = placeholders["gacha_type"] ?: ""
+        val page = placeholders["page"] ?: "1"
+        val endId = placeholders["end_id"] ?: "0"
 
-        if (config.api.method.uppercase() != "GET") return baseUrl
-
-        // 构建查询参数（对每个参数值进行 URL 编码，特别是 authkey 含 +/= 等特殊字符）
-        val params = config.params.map { (key, value) ->
-            val rawValue = replacePlaceholders(value, placeholders)
-            "$key=${URLEncoder.encode(rawValue, "UTF-8")}"
-        }.joinToString("&")
-
-        return if (params.isNotBlank()) {
-            val separator = if (baseUrl.contains("?")) "&" else "?"
-            "$baseUrl$separator$params"
-        } else {
-            baseUrl
+        val params = listOf(
+            "authkey" to authkey,
+            "authkey_ver" to "1",
+            "sign_type" to "2",
+            "auth_appid" to "webview_gacha",
+            "lang" to "zh-cn",
+            "device_type" to "mobile",
+            "plat_type" to "android",
+            "region" to region,
+            "gacha_type" to gachaType,
+            "page" to page,
+            "size" to PAGE_SIZE.toString(),
+            "end_id" to endId
+        ).joinToString("&") { (k, v) ->
+            "$k=${URLEncoder.encode(v, "UTF-8")}"
         }
-    }
-
-    /**
-     * 构建 POST 请求体
-     */
-    private fun buildPostBody(config: ApiConfig, placeholders: Map<String, String>): String {
-        val params = config.params.map { (key, value) ->
-            "\"$key\": \"${replacePlaceholders(value, placeholders)}\""
-        }.joinToString(",")
-        return "{$params}"
-    }
-
-    /**
-     * 替换字符串中的占位符 {xxx}
-     */
-    private fun replacePlaceholders(template: String, placeholders: Map<String, String>): String {
-        var result = template
-        placeholders.forEach { (key, value) ->
-            result = result.replace("{$key}", value)
-        }
-        return result
+        return "$BASE_URL?$params"
     }
 
     /**
@@ -124,9 +102,9 @@ class GachaApiClient @Inject constructor(
             val file = File(errorDir, "error_${timestamp}.txt")
             file.writeText(
                 "URL: $url\n" +
-                "Status: $statusCode\n" +
-                "Time: ${Date()}\n" +
-                "Response:\n$responseBody\n"
+                    "Status: $statusCode\n" +
+                    "Time: ${Date()}\n" +
+                    "Response:\n$responseBody\n"
             )
         } catch (_: Exception) {
             // 日志写入失败不影响主流程

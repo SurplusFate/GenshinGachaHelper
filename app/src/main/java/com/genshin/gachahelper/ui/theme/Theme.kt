@@ -37,12 +37,24 @@ val FiveStarColor = Color(0xFFFFD700)
 val FourStarColor = Color(0xFF87CEEB)
 val ThreeStarColor = Color(0xFF90EE90)
 
+/**
+ * 应用全局主题。
+ *
+ * @param themeMode 用户选择的主题模式（随系统/白天/夜间）
+ * @param systemDark 系统当前是否处于夜间模式（默认使用 Compose 提供的 isSystemInDarkTheme()）
+ */
 @Composable
 fun GenshinGachaHelperTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    themeMode: ThemeMode = ThemeMode.FOLLOW_SYSTEM,
+    systemDark: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val useDark = when (themeMode) {
+        ThemeMode.FOLLOW_SYSTEM -> systemDark
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+    val colorScheme = if (useDark) DarkColorScheme else LightColorScheme
 
     MaterialTheme(
         colorScheme = colorScheme,
