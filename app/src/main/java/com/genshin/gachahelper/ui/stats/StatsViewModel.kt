@@ -5,8 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.analysis.GachaReport
 import com.genshin.gachahelper.analysis.GachaStatsCalculator
 import com.genshin.gachahelper.auth.AuthRepository
+import com.genshin.gachahelper.core.SessionEvent
+import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
+import com.genshin.gachahelper.sync.GachaSyncService
+import com.genshin.gachahelper.sync.SyncState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,13 +28,41 @@ data class StatsUiState(
 class StatsViewModel @Inject constructor(
     private val gachaRepository: GachaRepository,
     private val authRepository: AuthRepository,
-    private val statsCalculator: GachaStatsCalculator
+    private val statsCalculator: GachaStatsCalculator,
+    private val sessionEventBus: SessionEventBus,
+    private val syncService: GachaSyncService
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(StatsUiState())
     val uiState: StateFlow<StatsUiState> = _uiState.asStateFlow()
 
     init {
+        // 监听同步状态：同步完成后自动刷新统计
+        viewModelScope.launch {
+            syncService.syncState.collect { state ->
+                if (state is SyncState.Success) {
+                    loadStats()
+                }
+            }
+        }
+
+        // 监听全局会话事件（登录/导入/清除等）
+        viewModelScope.launch {
+            sessionEventBus.events.collect { event ->
+                when (event) {
+                    SessionEvent.LoginCompleted,
+                    SessionEvent.DataImported,
+                    SessionEvent.DataSynced,
+                    SessionEvent.Refresh -> loadStats()
+
+                    SessionEvent.LogoutCompleted,
+                    SessionEvent.DataCleared -> {
+                        _uiState.value = StatsUiState(isLoading = false, hasData = false)
+                    }
+                }
+            }
+        }
+
         loadStats()
     }
 

@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.analysis.GachaStatsCalculator
 import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.auth.AuthRepository
+import com.genshin.gachahelper.core.SessionEvent
+import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.sync.GachaSyncService
@@ -24,6 +26,7 @@ data class HomeUiState(
     val characterStats: PoolStats? = null,
     val weaponStats: PoolStats? = null,
     val standardStats: PoolStats? = null,
+    val chronicledStats: PoolStats? = null,
     val syncState: SyncState = SyncState.Idle,
     val isLoading: Boolean = true
 )
@@ -33,21 +36,41 @@ class HomeViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val gachaRepository: GachaRepository,
     private val statsCalculator: GachaStatsCalculator,
-    private val syncService: GachaSyncService
+    private val syncService: GachaSyncService,
+    private val sessionEventBus: SessionEventBus
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     init {
+        // 监听同步状态
         viewModelScope.launch {
             syncService.syncState.collect { syncState ->
                 _uiState.value = _uiState.value.copy(syncState = syncState)
                 if (syncState is SyncState.Success) {
-                    loadStats()
+                    loadData()
                 }
             }
         }
+
+        // 监听全局会话事件（登录/导入/清除等）
+        viewModelScope.launch {
+            sessionEventBus.events.collect { event ->
+                when (event) {
+                    SessionEvent.LoginCompleted,
+                    SessionEvent.DataImported,
+                    SessionEvent.DataSynced,
+                    SessionEvent.Refresh -> loadData()
+
+                    SessionEvent.LogoutCompleted,
+                    SessionEvent.DataCleared -> {
+                        _uiState.value = HomeUiState(isLoading = false)
+                    }
+                }
+            }
+        }
+
         loadData()
     }
 
@@ -81,7 +104,7 @@ class HomeViewModel @Inject constructor(
 
         val accountId = account.id
 
-        // 加载各卡池记录并计算统计
+        // 加载各卡池记录并计算统计（包含集录祈愿）
         val characterRecords = gachaRepository.getRecordsByPool(
             accountId, GachaType.CHARACTER.value
         )
@@ -90,6 +113,9 @@ class HomeViewModel @Inject constructor(
         )
         val standardRecords = gachaRepository.getRecordsByPool(
             accountId, GachaType.STANDARD.value
+        )
+        val chronicledRecords = gachaRepository.getRecordsByPool(
+            accountId, GachaType.CHRONICLED.value
         )
 
         val characterStats = if (characterRecords.isNotEmpty()) {
@@ -104,10 +130,15 @@ class HomeViewModel @Inject constructor(
             statsCalculator.calculatePoolStats(standardRecords, GachaType.STANDARD.value)
         } else null
 
+        val chronicledStats = if (chronicledRecords.isNotEmpty()) {
+            statsCalculator.calculatePoolStats(chronicledRecords, GachaType.CHRONICLED.value)
+        } else null
+
         _uiState.value = _uiState.value.copy(
             characterStats = characterStats,
             weaponStats = weaponStats,
             standardStats = standardStats,
+            chronicledStats = chronicledStats,
             isLoading = false
         )
     }

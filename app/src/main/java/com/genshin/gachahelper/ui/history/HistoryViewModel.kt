@@ -7,6 +7,8 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.genshin.gachahelper.auth.AuthRepository
+import com.genshin.gachahelper.core.SessionEvent
+import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class HistoryFilter(
@@ -29,42 +32,68 @@ data class HistoryFilter(
 @HiltViewModel
 class HistoryViewModel @Inject constructor(
     private val gachaRepository: GachaRepository,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val sessionEventBus: SessionEventBus
 ) : ViewModel() {
 
     private val _filter = MutableStateFlow(HistoryFilter())
     val filter: StateFlow<HistoryFilter> = _filter.asStateFlow()
 
-    val records: Flow<PagingData<GachaRecordEntity>> = _filter
-        .flatMapLatest { filter ->
-            val uid = runCatching { authRepository.getUid() }.getOrNull()
-            val account = runCatching { gachaRepository.getAccountByUid(uid ?: "") }.getOrNull()
+    // 刷新触发器：每次收到事件就自增，使 flatMapLatest 重新创建 Pager
+    private val _refreshTrigger = MutableStateFlow(0)
 
-            if (account == null) {
-                flowOf(PagingData.empty())
-            } else {
-                val accountId = account.id
-                val pagingSourceFactory = when {
-                    filter.poolType != null && filter.rarity != null -> {
-                        { gachaRepository.getRecordsPagedByPoolAndRarity(accountId, filter.poolType, filter.rarity) }
+    val records: Flow<PagingData<GachaRecordEntity>> = _refreshTrigger
+        .flatMapLatest { _ ->
+            _filter.flatMapLatest { filter ->
+                val uid = runCatching { authRepository.getUid() }.getOrNull()
+                val account = runCatching { gachaRepository.getAccountByUid(uid ?: "") }.getOrNull()
+
+                if (account == null) {
+                    flowOf(PagingData.empty())
+                } else {
+                    val accountId = account.id
+                    val pagingSourceFactory = when {
+                        filter.poolType != null && filter.rarity != null -> {
+                            { gachaRepository.getRecordsPagedByPoolAndRarity(accountId, filter.poolType, filter.rarity) }
+                        }
+                        filter.poolType != null -> {
+                            { gachaRepository.getRecordsPagedByPool(accountId, filter.poolType) }
+                        }
+                        filter.rarity != null -> {
+                            { gachaRepository.getRecordsPagedByRarity(accountId, filter.rarity) }
+                        }
+                        else -> {
+                            { gachaRepository.getAllRecordsPaged(accountId) }
+                        }
                     }
-                    filter.poolType != null -> {
-                        { gachaRepository.getRecordsPagedByPool(accountId, filter.poolType) }
-                    }
-                    filter.rarity != null -> {
-                        { gachaRepository.getRecordsPagedByRarity(accountId, filter.rarity) }
-                    }
-                    else -> {
-                        { gachaRepository.getAllRecordsPaged(accountId) }
-                    }
+
+                    Pager(
+                        config = PagingConfig(pageSize = 20, enablePlaceholders = false),
+                        pagingSourceFactory = pagingSourceFactory
+                    ).flow.cachedIn(viewModelScope)
                 }
-
-                Pager(
-                    config = PagingConfig(pageSize = 20, enablePlaceholders = false),
-                    pagingSourceFactory = pagingSourceFactory
-                ).flow.cachedIn(viewModelScope)
             }
         }
+
+    init {
+        // 监听全局会话事件，收到后触发 Pager 重建
+        viewModelScope.launch {
+            sessionEventBus.events.collect { event ->
+                when (event) {
+                    SessionEvent.LoginCompleted,
+                    SessionEvent.DataImported,
+                    SessionEvent.DataSynced,
+                    SessionEvent.Refresh -> _refreshTrigger.value++
+
+                    SessionEvent.LogoutCompleted,
+                    SessionEvent.DataCleared -> {
+                        _filter.value = HistoryFilter()
+                        _refreshTrigger.value++
+                    }
+                }
+            }
+        }
+    }
 
     fun setPoolFilter(poolType: Int?) {
         _filter.value = _filter.value.copy(poolType = poolType)

@@ -10,6 +10,8 @@ import com.genshin.gachahelper.auth.GameRole
 import com.genshin.gachahelper.auth.MihoyoApiService
 import com.genshin.gachahelper.auth.QrCodeData
 import com.genshin.gachahelper.auth.QrCodeGenerator
+import com.genshin.gachahelper.core.SessionEvent
+import com.genshin.gachahelper.core.SessionEventBus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,7 +27,8 @@ import javax.inject.Inject
 @HiltViewModel
 class AuthViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val mihoyoApi: MihoyoApiService
+    private val mihoyoApi: MihoyoApiService,
+    private val sessionEventBus: SessionEventBus
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AuthUiState())
@@ -540,13 +543,17 @@ class AuthViewModel @Inject constructor(
                 nickname = role.nickname
             )
             when (val result = mihoyoApi.generateAuthKey(role.uid, role.region)) {
-                is ApiResult.Success -> setState {
-                    copy(
-                        phase = AuthPhase.DONE,
-                        authKey = result.data,
-                        statusText = "授权成功",
-                        debugInfo = null
-                    )
+                is ApiResult.Success -> {
+                    // 通知全局：登录完成，其他 ViewModel 刷新数据
+                    sessionEventBus.emit(SessionEvent.LoginCompleted)
+                    setState {
+                        copy(
+                            phase = AuthPhase.DONE,
+                            authKey = result.data,
+                            statusText = "授权成功",
+                            debugInfo = null
+                        )
+                    }
                 }
                 is ApiResult.Error -> setState {
                     copy(

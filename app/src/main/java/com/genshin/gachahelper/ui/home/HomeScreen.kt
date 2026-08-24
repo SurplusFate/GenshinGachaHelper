@@ -198,6 +198,13 @@ fun HomeScreen(
             } ?: EmptyPoolCard("常驻池")
         }
 
+        // 集录池
+        item {
+            uiState.chronicledStats?.let {
+                PoolCard(poolStats = it, poolLabel = "集录池")
+            } ?: EmptyPoolCard("集录池")
+        }
+
         item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }

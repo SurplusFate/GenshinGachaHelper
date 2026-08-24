@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.config.importer.ConfigImporter
 import com.genshin.gachahelper.config.store.ConfigStore
+import com.genshin.gachahelper.core.SessionEvent
+import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.sync.GachaDataImporter
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -35,6 +37,7 @@ class SettingsViewModel @Inject constructor(
     private val configImporter: ConfigImporter,
     private val gachaRepository: GachaRepository,
     private val gachaDataImporter: GachaDataImporter,
+    private val sessionEventBus: SessionEventBus,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -103,6 +106,8 @@ class SettingsViewModel @Inject constructor(
             try {
                 val result = gachaDataImporter.importFromUri(uri)
                 _importMessage.value = if (result.success) {
+                    // 通知全局：数据已导入，其他页面刷新
+                    sessionEventBus.emit(SessionEvent.DataImported)
                     "导入完成: ${result.totalImported} 条新增, ${result.skipped} 条跳过 (UID: ${result.uid})"
                 } else {
                     "导入失败: ${result.message}"
@@ -141,6 +146,7 @@ class SettingsViewModel @Inject constructor(
                 gachaRepository.deleteAccount(account.id)
             }
             authRepository.logout()
+            sessionEventBus.emit(SessionEvent.LogoutCompleted)
             loadSettings()
         }
     }
@@ -152,6 +158,7 @@ class SettingsViewModel @Inject constructor(
             if (account != null) {
                 gachaRepository.deleteAllByAccount(account.id)
             }
+            sessionEventBus.emit(SessionEvent.DataCleared)
             loadSettings()
         }
     }
