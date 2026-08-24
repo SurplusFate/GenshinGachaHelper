@@ -49,4 +49,20 @@ interface GachaRecordDao {
 
     @Query("SELECT orderNumber FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY orderNumber DESC LIMIT 1")
     suspend fun getLatestOrderNumber(accountId: Long, poolType: Int): String?
+
+    /**
+     * 获取指定账号下所有记录的内容指纹（poolType, time, itemName）
+     * 用于导入时的二级去重：当 ID 不匹配但内容相同时也跳过
+     */
+    @Query("SELECT poolType, time, itemName FROM gacha_record WHERE accountId = :accountId")
+    suspend fun getRecordKeysByAccount(accountId: Long): List<RecordKey>
+
+    /**
+     * 用于内容去重的数据类
+     */
+    data class RecordKey(
+        val poolType: Int,
+        val time: String,
+        val itemName: String
+    )
 }

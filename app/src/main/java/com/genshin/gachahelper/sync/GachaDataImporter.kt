@@ -198,16 +198,40 @@ class GachaDataImporter @Inject constructor(
                 return@withContext ImportResult(true, 0, skipped, effectiveUid, "没有可导入的有效记录", errors)
             }
 
-            // 批量插入（IGNORE 策略自动去重）
-            val inserted = gachaRepository.insertRecords(records)
+            // 内容去重：查询已有记录，构建 (poolType, time, itemName) 多重集
+            // 当不同来源的数据 ID 格式不同时，用内容指纹做二级去重
+            val existingKeys = gachaRepository.getRecordKeysByAccount(accountId)
+            val existingMultiset = mutableMapOf<Triple<Int, String, String>, Int>()
+            for (key in existingKeys) {
+                val triple = Triple(key.poolType, key.time, key.itemName)
+                existingMultiset[triple] = (existingMultiset[triple] ?: 0) + 1
+            }
+
+            val filteredRecords = mutableListOf<GachaRecordEntity>()
+            var contentDupSkipped = 0
+            for (record in records) {
+                val key = Triple(record.poolType, record.time, record.itemName)
+                val existingCount = existingMultiset[key]
+                if (existingCount != null && existingCount > 0) {
+                    // 内容匹配，跳过并减少计数（处理同一次十连中的重复物品）
+                    existingMultiset[key] = existingCount - 1
+                    contentDupSkipped++
+                } else {
+                    filteredRecords.add(record)
+                }
+            }
+
+            // 批量插入（IGNORE 策略做 ID 级去重作为最后防线）
+            val inserted = gachaRepository.insertRecords(filteredRecords)
+            val idDupSkipped = filteredRecords.size - inserted
 
             ImportResult(
                 success = true,
                 totalImported = inserted,
-                skipped = skipped + (records.size - inserted), // 解析跳过 + 重复跳过
+                skipped = skipped + contentDupSkipped + idDupSkipped,
                 uid = effectiveUid,
                 message = if (inserted > 0)
-                    "导入成功！新增 $inserted 条记录${if (records.size - inserted > 0) "，跳过 ${records.size - inserted} 条重复" else ""}"
+                    "导入成功！新增 $inserted 条记录${if (contentDupSkipped + idDupSkipped > 0) "，跳过 ${contentDupSkipped + idDupSkipped} 条重复" else ""}"
                 else
                     "所有记录均与已有数据重复，未新增",
                 errors = errors

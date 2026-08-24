@@ -6,6 +6,7 @@ import com.genshin.gachahelper.data.local.dao.PoolDao
 import com.genshin.gachahelper.data.local.entity.AccountEntity
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.local.entity.PoolEntity
+import com.genshin.gachahelper.data.local.dao.GachaRecordDao.RecordKey
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -66,6 +67,9 @@ class GachaRepository @Inject constructor(
 
     suspend fun getLatestOrderNumber(accountId: Long, poolType: Int): String? =
         gachaRecordDao.getLatestOrderNumber(accountId, poolType)
+
+    suspend fun getRecordKeysByAccount(accountId: Long): List<RecordKey> =
+        gachaRecordDao.getRecordKeysByAccount(accountId)
 
     // Pool operations
     suspend fun insertAllPools(pools: List<PoolEntity>) =
