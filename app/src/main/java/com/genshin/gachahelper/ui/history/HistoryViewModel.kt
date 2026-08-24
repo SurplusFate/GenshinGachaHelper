@@ -46,7 +46,7 @@ class HistoryViewModel @Inject constructor(
         .flatMapLatest { _ ->
             _filter.flatMapLatest { filter ->
                 val uid = runCatching { authRepository.getUid() }.getOrNull()
-                val account = runCatching { gachaRepository.getAccountByUid(uid ?: "") }.getOrNull()
+                val account = runCatching { gachaRepository.getActiveAccount(uid) }.getOrNull()
 
                 if (account == null) {
                     flowOf(PagingData.empty())

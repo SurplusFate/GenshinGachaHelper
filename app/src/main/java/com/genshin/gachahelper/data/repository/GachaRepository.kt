@@ -23,6 +23,18 @@ class GachaRepository @Inject constructor(
     suspend fun getAccountByUid(uid: String): AccountEntity? =
         accountDao.getAccountByUid(uid)
 
+    /**
+     * 获取"活跃账号"：优先使用传入的 authUid（登录态），
+     * 若未登录则回退到数据库中最近创建的账号（例如手动导入 UIGF 的场景）。
+     */
+    suspend fun getActiveAccount(authUid: String?): AccountEntity? {
+        if (!authUid.isNullOrBlank()) {
+            val account = accountDao.getAccountByUid(authUid)
+            if (account != null) return account
+        }
+        return accountDao.getCurrentAccountOnce()
+    }
+
     suspend fun insertAccount(account: AccountEntity): Long =
         accountDao.insert(account)
 

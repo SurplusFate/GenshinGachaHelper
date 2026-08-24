@@ -25,6 +25,7 @@ data class SettingsUiState(
     val isLoggedIn: Boolean = false,
     val uid: String? = null,
     val nickname: String? = null,
+    val hasData: Boolean = false,
     val errorLogCount: Int = 0
 )
 
@@ -71,12 +72,18 @@ class SettingsViewModel @Inject constructor(
     fun loadSettings() {
         viewModelScope.launch {
             val loggedIn = authRepository.isLoggedIn()
-            val uid = authRepository.getUid()
+            val authUid = authRepository.getUid()
             val nickname = authRepository.getNickname()
+
+            // 解析活跃账号：登录时用登录UID，未登录时回退到最近导入的账号
+            val account = gachaRepository.getActiveAccount(authUid)
+            val hasData = account != null
+
             _uiState.value = SettingsUiState(
                 isLoggedIn = loggedIn,
-                uid = uid,
-                nickname = nickname
+                uid = account?.uid,
+                nickname = nickname,
+                hasData = hasData
             )
         }
     }
@@ -120,16 +127,18 @@ class SettingsViewModel @Inject constructor(
 
     fun exportGachaData(callback: (String) -> Unit) {
         viewModelScope.launch {
-            val uid = authRepository.getUid()
-            if (uid.isNullOrBlank()) {
-                _importMessage.value = "未登录，无法导出"
+            val authUid = authRepository.getUid()
+            val account = gachaRepository.getActiveAccount(authUid)
+            val exportUid = account?.uid
+            if (exportUid.isNullOrBlank()) {
+                _importMessage.value = "没有可导出的抽卡数据"
                 return@launch
             }
-            val json = gachaDataImporter.exportToString(uid)
+            val json = gachaDataImporter.exportToString(exportUid)
             val fileName = run {
                 val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
                 val timeStr = sdf.format(java.util.Date())
-                "UIGF_v3.0_${uid}_${timeStr}.json"
+                "UIGF_v3.0_${exportUid}_${timeStr}.json"
             }
             try {
                 // 使用 MediaStore 写入 Download 目录，兼容 Android 10+
@@ -181,8 +190,8 @@ class SettingsViewModel @Inject constructor(
 
     fun clearAllData() {
         viewModelScope.launch {
-            val uid = authRepository.getUid()
-            val account = gachaRepository.getAccountByUid(uid ?: "")
+            val authUid = authRepository.getUid()
+            val account = gachaRepository.getActiveAccount(authUid)
             if (account != null) {
                 gachaRepository.deleteAllByAccount(account.id)
             }

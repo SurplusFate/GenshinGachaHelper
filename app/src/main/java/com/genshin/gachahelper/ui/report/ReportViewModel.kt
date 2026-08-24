@@ -67,7 +67,7 @@ class ReportViewModel @Inject constructor(
             loadMutex.withLock {
                 _uiState.value = _uiState.value.copy(isLoading = true)
                 val uid = authRepository.getUid()
-                val account = gachaRepository.getAccountByUid(uid ?: "")
+                val account = gachaRepository.getActiveAccount(uid)
 
                 if (account == null) {
                     _uiState.value = ReportUiState(isLoading = false)

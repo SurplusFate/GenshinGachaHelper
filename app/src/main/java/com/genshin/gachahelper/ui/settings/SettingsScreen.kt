@@ -94,6 +94,13 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 ) {
                     Text("退出登录")
                 }
+            } else if (uiState.hasData) {
+                Text(text = "UID: ${uiState.uid ?: "未知"}")
+                Text(
+                    text = "本地导入数据（未登录）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             } else {
                 Text(
                     text = "未登录",
@@ -140,7 +147,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             // 导出历史数据
             OutlinedButton(
                 onClick = { viewModel.exportGachaData { } },
-                enabled = uiState.isLoggedIn,
+                enabled = uiState.hasData,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("导出抽卡记录 (UIGF)")

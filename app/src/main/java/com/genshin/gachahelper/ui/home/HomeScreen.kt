@@ -52,8 +52,8 @@ fun HomeScreen(
         return
     }
 
-    if (!uiState.isLoggedIn) {
-        // 未登录引导
+    // 既没登录也没有本地数据 → 引导页
+    if (!uiState.isLoggedIn && !uiState.hasData) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -68,7 +68,7 @@ fun HomeScreen(
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "授权米游社，自动同步抽卡记录，分析你的抽卡运气",
+                text = "授权米游社自动同步，或手动导入 UIGF 数据，分析你的抽卡运气",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -78,6 +78,13 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("授权米游社")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { navController.navigate(Screen.Settings.route) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("导入 UIGF 数据")
             }
         }
         return
@@ -89,87 +96,118 @@ fun HomeScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 账号信息
+        // 账号信息 / 本地数据提示
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = uiState.nickname ?: "旅行者",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+            if (uiState.isLoggedIn) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
                     )
-                    Text(
-                        text = "UID: ${uiState.uid}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = uiState.nickname ?: "旅行者",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "UID: ${uiState.uid}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
                     )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "本地数据",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "UID: ${uiState.uid ?: "未知"}（手动导入）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { navController.navigate(Screen.Auth.route) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("登录米游社以同步最新数据")
+                        }
+                    }
                 }
             }
         }
 
-        // 同步按钮
-        item {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                when (val sync = uiState.syncState) {
-                    is SyncState.Idle, is SyncState.Success -> {
-                        if (sync is SyncState.Success) {
-                            Text(
-                                text = "上次同步：新增 ${sync.totalNew} 条",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-                        }
-                        Button(
-                            onClick = { viewModel.sync() },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("同步抽卡记录")
-                        }
-                    }
-                    is SyncState.Loading -> {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = sync.message,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        }
-                    }
-                    is SyncState.Progress -> {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "正在同步：${sync.currentPool}（${sync.totalRecords} 条）",
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            Text(
-                                text = "新增 ${sync.newRecords} 条",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    is SyncState.Error -> {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = sync.message,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-                            OutlinedButton(
+        // 同步按钮（仅登录态显示）
+        if (uiState.isLoggedIn) {
+            item {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    when (val sync = uiState.syncState) {
+                        is SyncState.Idle, is SyncState.Success -> {
+                            if (sync is SyncState.Success) {
+                                Text(
+                                    text = "上次同步：新增 ${sync.totalNew} 条",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                            }
+                            Button(
                                 onClick = { viewModel.sync() },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("重试")
+                                Text("同步抽卡记录")
+                            }
+                        }
+                        is SyncState.Loading -> {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = sync.message,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                        is SyncState.Progress -> {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "正在同步：${sync.currentPool}（${sync.totalRecords} 条）",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                Text(
+                                    text = "新增 ${sync.newRecords} 条",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        is SyncState.Error -> {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = sync.message,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                                OutlinedButton(
+                                    onClick = { viewModel.sync() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("重试")
+                                }
                             }
                         }
                     }
@@ -342,7 +380,7 @@ fun EmptyPoolCard(poolLabel: String) {
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "暂无数据，点击上方同步按钮获取抽卡记录",
+                text = "暂无数据",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

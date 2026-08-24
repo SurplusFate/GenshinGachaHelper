@@ -15,7 +15,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -25,6 +24,7 @@ data class HomeUiState(
     val isLoggedIn: Boolean = false,
     val uid: String? = null,
     val nickname: String? = null,
+    val hasData: Boolean = false,
     val characterStats: PoolStats? = null,
     val character2Stats: PoolStats? = null,
     val weaponStats: PoolStats? = null,
@@ -85,30 +85,28 @@ class HomeViewModel @Inject constructor(
                 val uid = authRepository.getUid()
                 val nickname = authRepository.getNickname()
 
+                // 通过活跃账号解析：登录时用登录 UID，未登录时回退到最近导入的账号
+                val account = gachaRepository.getActiveAccount(uid)
+
                 _uiState.value = _uiState.value.copy(
                     isLoggedIn = loggedIn,
-                    uid = uid,
+                    uid = account?.uid,
                     nickname = nickname
                 )
 
-                if (loggedIn) {
-                    loadStats()
+                if (account != null) {
+                    loadStats(account.id)
                 } else {
-                    _uiState.value = _uiState.value.copy(isLoading = false)
+                    _uiState.value = _uiState.value.copy(
+                        hasData = false,
+                        isLoading = false
+                    )
                 }
             }
         }
     }
 
-    private suspend fun loadStats() {
-        val account = gachaRepository.getCurrentAccount().first()
-        if (account == null) {
-            _uiState.value = _uiState.value.copy(isLoading = false)
-            return
-        }
-
-        val accountId = account.id
-
+    private suspend fun loadStats(accountId: Long) {
         // 加载各卡池记录并计算统计（包含角色活动祈愿-2 和集录祈愿）
         val characterRecords = gachaRepository.getRecordsByPool(
             accountId, GachaType.CHARACTER.value
@@ -159,6 +157,10 @@ class HomeViewModel @Inject constructor(
             statsCalculator.calculatePoolStats(noviceRecords, GachaType.NOVICE.value)
         } else null
 
+        val hasAnyData = characterStats != null || character2Stats != null ||
+                weaponStats != null || standardStats != null ||
+                noviceStats != null || chronicledStats != null
+
         _uiState.value = _uiState.value.copy(
             characterStats = characterStats,
             character2Stats = character2Stats,
@@ -166,6 +168,7 @@ class HomeViewModel @Inject constructor(
             standardStats = standardStats,
             noviceStats = noviceStats,
             chronicledStats = chronicledStats,
+            hasData = hasAnyData,
             isLoading = false
         )
     }

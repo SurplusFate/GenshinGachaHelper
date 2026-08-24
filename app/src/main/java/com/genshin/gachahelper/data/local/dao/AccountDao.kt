@@ -16,6 +16,9 @@ interface AccountDao {
     @Query("SELECT * FROM account ORDER BY createTime DESC LIMIT 1")
     fun getCurrentAccount(): Flow<AccountEntity?>
 
+    @Query("SELECT * FROM account ORDER BY createTime DESC LIMIT 1")
+    suspend fun getCurrentAccountOnce(): AccountEntity?
+
     @Query("SELECT * FROM account WHERE uid = :uid")
     suspend fun getAccountByUid(uid: String): AccountEntity?
 
