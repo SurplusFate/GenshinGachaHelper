@@ -107,6 +107,37 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-24 · 修复验证码/密码登录：与扫码凭证等价（commit 待提交）
+
+**现象**：验证码 / 密码登录（WEBVIEW 路径）时而能登录但后续 `getGameRoles` / `generateAuthKey`
+报 -100/401，表现为一种登录方式可用另一种不可用，或换账号后必须重启 App。
+
+**根因**：`AuthViewModel.onWebViewLoginComplete` 有 4 个 fallback 方案：
+- 方案 1（stoken 直存）/ 方案 4（login_ticket → multiToken 换 stoken）是正确的；
+- **方案 2/3 会把 `ltoken_v2` 或 `cookie_token_v2` 冒充 `stoken` 存进 DataStore**，导致
+  后续所有需要 `stoken` 的 API（`getCookieTokenByStoken`、`getLTokenByStoken`、
+  `buildCookieString` 中 `stoken` 字段、`generateAuthKey` DS 签名链路）都带错值。
+  看起来"登录成功"，但后续全链接口随机出错，和扫码路径不等价。
+
+**修复**：
+1. `onWebViewLoginComplete` 删掉方案 2/3，只剩两种合法路径：
+   - 有 `stoken_v2` + `ltuid` → 调用 `savePassportCredentialsAndFetchRoles(stoken, mid, aid)`，
+     与扫码 `Confirmed` 分支完全同构（存 stoken → 换 cookie_token → 换 ltoken →
+     fetchGameRoles → selectRole → generateAuthKey）。
+   - 否则只要有 `login_ticket` + `ltuid` → 走 `getMultiTokenByLoginTicket` 换真正 stoken，
+     再沿用扫码同构的 cookie_token/ltoken 补换流程。
+   - 两条都不满足：直接报错并引导改用扫码（不再冒充 stoken），错误文案给出 ltuid，方便定位。
+2. `exchangeTokenByLoginTicket` 拿到 stoken 后，补足和扫码一致的
+   `getCookieTokenByStoken` + `getLTokenByStoken` 兑换步骤（WebView cookie 中已带的就跳过，避免重复请求），最终 `saveLoginCredentials(...)`
+   存入完整 5 件套，与扫码产出完全一致，后续接口不再分化。
+3. 全量审查清单"重要"组第 12 条（AuthViewModel 方案 2/3 把 ltoken/cookie_token 当 stoken）
+   标记 ✓。
+
+**约束**：验证码与密码登录本身 APP 不参与短信/密码校验，都走同一个 WebView 容器
+（`user.mihoyo.com/#/login`），用户在米游社 H5 页选方式。修复后两者的最终凭证集与
+扫码登录完全同构，能取得 stoken 就全部一致通过；取不到 login_ticket（米游社近年 H5
+登录页有调整）就明确报错并引导扫码，不再假成功。
+
 ### 2026-08-24 · 修复登录后页面刷新不及时（commit `49b3cef`）
 
 **现象**：APP 登录后部分页面（尤其 Settings）刷新不及时，需退出 App 重进才能看到新登录态/UID/昵称。
@@ -178,7 +209,7 @@ minify 关闭、salt 裸露、JSON 拼接未转义等）仍待办。
 - `GachaApiClient.buildPostBody` 与 `MihoyoApiService` 多处字符串模板拼 JSON / URL 未转义，存在 JSON 破坏与字段注入风险。应统一用 `JsonObject` + `HttpUrl.Builder`。
 - `MihoyoApiService` 的 OkHttpClient `followRedirects(true)`，认证请求带 Cookie 时可能跨域泄露。应设 `false`。
 - `GachaResponseParser.parseRarity` 用 `value.contains("5")` 判断星级，`"15"`/`"S5"` 会被误识别为 5 星。应精确匹配。
-- `AuthViewModel` 方案 2/3 把 `ltoken`/`cookie_token` 当作 `stoken` 存储，后续请求会带错误值。应禁用或明确标 TODO。
+- ~~`AuthViewModel` 方案 2/3 把 `ltoken`/`cookie_token` 当作 `stoken` 存储，后续请求会带错误值。~~ ✓ 已在"验证码/密码登录等价修复"轮修复：删除方案 2/3，只保留 stoken 直存 与 login_ticket→multiToken 换 stoken 两条路径
 - 二维码轮询 `while (isActive) { delay(2000) }` 无最大次数 / 超时上限，仅依赖服务端返回 `-106`。
 - `GachaSyncService.syncAll` 的"读-判断-写"非原子，并发同步可能双进。应改 `Mutex.tryLock()`。
 

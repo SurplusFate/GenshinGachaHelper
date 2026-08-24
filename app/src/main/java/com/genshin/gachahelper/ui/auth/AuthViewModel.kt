@@ -376,53 +376,36 @@ class AuthViewModel @Inject constructor(
                 }
 
                 when {
-                    // 方案1：直接有 stoken
+                    // 方案1：直接有 stoken_v2 → 走与扫码 Confirmed 完全同构的兑换链路
+                    // （savePassportCredentialsAndFetchRoles：存 stoken → 换 cookie_token → 换 ltoken
+                    // → fetchGameRoles → selectRole → generateAuthKey）
                     !stokenV2.isNullOrBlank() && !ltuid.isNullOrBlank() -> {
-                        authRepository.saveLoginCredentials(
-                            stoken = stokenV2,
-                            ltuid = ltuid,
-                            mid = mid,
-                            cookieToken = cookieTokenV2,
-                            ltoken = ltokenV2
-                        )
-                        fetchGameRoles()
+                        savePassportCredentialsAndFetchRoles(stokenV2, mid, ltuid)
                     }
-                    // 方案2：有 ltoken_v2，当 stoken 用（genAuthKey URL 已修正为 miyoushe.com）
-                    !ltokenV2.isNullOrBlank() && !ltuid.isNullOrBlank() -> {
-                        authRepository.saveLoginCredentials(
-                            stoken = ltokenV2,
-                            ltuid = ltuid,
-                            mid = mid,
-                            cookieToken = cookieTokenV2,
-                            ltoken = ltokenV2
-                        )
-                        fetchGameRoles()
-                    }
-                    // 方案3：有 cookie_token_v2 但没有 ltoken，也尝试
-                    !cookieTokenV2.isNullOrBlank() && !ltuid.isNullOrBlank() -> {
-                        authRepository.saveLoginCredentials(
-                            stoken = cookieTokenV2,
-                            ltuid = ltuid,
-                            mid = mid,
-                            cookieToken = cookieTokenV2,
-                            ltoken = ltokenV2
-                        )
-                        fetchGameRoles()
-                    }
-                    // 方案4：有 login_ticket + ltuid，换 stoken + ltoken
+                    // 方案2：有 login_ticket + ltuid → 用 getMultiTokenByLoginTicket 换真正 stoken
+                    // 拿到 stoken 后同样走扫码一致的 savePassportCredentialsAndFetchRoles，
+                    // 保证 cookie_token、ltoken 兑换、后续接口都和扫码等价。
                     !loginTicket.isNullOrBlank() && !ltuid.isNullOrBlank() -> {
                         exchangeTokenByLoginTicket(loginTicket, ltuid, cookieTokenV2, mid)
                     }
+                    // 不满足以上：要么 ltuid 完全为空（没登录），要么登录页没下发 stoken_v2
+                    // 也没下发 login_ticket（近年 H5 登录页的变化）。
+                    // 旧方案 2/3 会把 ltoken/cookie_token 冒充 stoken 存，导致后续 getGameRoles /
+                    // generateAuthKey 全报 -100/401 但用户以为登录成功。现在改成直接报错，
+                    // 并给出明确修复指引。
                     else -> {
                         setState {
                             copy(
                                 phase = AuthPhase.WEBVIEW_LOGIN,
-                                error = if (ltuid == null)
+                                error = if (ltuid == null) {
                                     "未检测到登录凭证，请确认已完成登录"
-                                else
-                                    "缺少 login_ticket，无法换取 stoken。\n请尝试重新登录或使用扫码登录",
+                                } else {
+                                    "检测到账号（ltuid=$ltuid）但没有可用于换取凭证的 login_ticket。\n" +
+                                        "请尝试：\n1. 退出账号后重新登录\n2. 改用扫码登录（推荐）"
+                                },
                                 statusText = "",
-                                debugInfo = "Cookie 内容：\n${cookies.take(800)}\n\n可用 key: ${cookieMap.keys.joinToString(", ")}"
+                                debugInfo = "Cookie 内容：\n${cookies.take(800)}\n\n" +
+                                    "可用 key: ${cookieMap.keys.joinToString(", ")}"
                             )
                         }
                     }
@@ -455,13 +438,65 @@ class AuthViewModel @Inject constructor(
         when (val result = mihoyoApi.getMultiTokenByLoginTicket(loginTicket, uid)) {
             is ApiResult.Success -> {
                 val tokenInfo = result.data
+                // 拿到真正的 stoken 后走与扫码一致的链路：
+                // savePassportCredentialsAndFetchRoles 会再换 cookie_token + ltoken
+                // （cookie_token 是 getUserGameRolesByCookie 必需的，ltoken 是 generateAuthKey 的保险）
+                // 这样扫码与 WebView 登录产出的最终凭证集完全同构，不会出现一种登录能跑
+                // 另一种登录报 -100 的分化。
+                val existingCookieToken = if (!cookieToken.isNullOrBlank()) cookieToken else null
                 authRepository.saveLoginCredentials(
                     stoken = tokenInfo.stoken,
                     ltuid = uid,
                     mid = mid,
-                    cookieToken = cookieToken,
+                    cookieToken = existingCookieToken,
                     ltoken = tokenInfo.ltoken.ifBlank { null }
                 )
+                // 复用 savePassportCredentialsAndFetchRoles 的后半段：换 cookie_token + ltoken
+                // → fetchGameRoles → selectRole → generateAuthKey。为避免重复覆盖掉已保存的
+                // cookie_token/ltoken（WebView 里可能本来就有），这里的实现是直接调
+                // fetchGameRoles，而 savePassportCredentialsAndFetchRoles 的"先存 stoken 再
+                // 换两 token"的逻辑通过上面 saveLoginCredentials + 下面补两步骤完成。
+                // 注：为减少重复网络请求，如果 WebView cookie 里已带 cookie_token 且已有 ltoken，
+                // 就不再调用 getCookieTokenByStoken / getLTokenByStoken，直接用已有的进入下一阶段。
+                val needRefreshCookieToken = existingCookieToken == null
+                val needRefreshLtoken = tokenInfo.ltoken.isBlank()
+                if (needRefreshCookieToken || needRefreshLtoken) {
+                    var newCookieToken = existingCookieToken
+                    var newLtoken = tokenInfo.ltoken.ifBlank { null }
+                    if (existingCookieToken == null) {
+                        when (val r = mihoyoApi.getCookieTokenByStoken(tokenInfo.stoken, uid, mid)) {
+                            is ApiResult.Success -> {
+                                newCookieToken = r.data
+                                setState { copy(debugInfo = (uiState.value.debugInfo ?: "") + "\ncookie_token 换取成功") }
+                            }
+                            is ApiResult.Error -> {
+                                setState { copy(debugInfo = (uiState.value.debugInfo ?: "") + "\ncookie_token 换取失败: ${r.message}") }
+                            }
+                        }
+                    }
+                    if (tokenInfo.ltoken.isBlank()) {
+                        when (val r = mihoyoApi.getLTokenByStoken(tokenInfo.stoken, uid, mid)) {
+                            is ApiResult.Success -> {
+                                newLtoken = r.data
+                                setState { copy(debugInfo = (uiState.value.debugInfo ?: "") + "\nltoken 换取成功") }
+                            }
+                            is ApiResult.Error -> {
+                                setState { copy(debugInfo = (uiState.value.debugInfo ?: "") + "\nltoken 换取失败: ${r.message}") }
+                            }
+                        }
+                    }
+                    // 把新换的 cookie_token/ltoken 补存（mid/cookieToken/ltoken 为 null 时不覆盖）
+                    authRepository.saveLoginCredentials(
+                        stoken = tokenInfo.stoken,
+                        ltuid = uid,
+                        mid = mid,
+                        cookieToken = newCookieToken,
+                        ltoken = newLtoken
+                    )
+                    setState { copy(statusText = "正在获取游戏角色...") }
+                } else {
+                    setState { copy(statusText = "已拿到所有凭证，正在获取游戏角色...") }
+                }
                 fetchGameRoles()
             }
             is ApiResult.Error -> {
