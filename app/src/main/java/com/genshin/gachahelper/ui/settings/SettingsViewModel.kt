@@ -143,7 +143,11 @@ class SettingsViewModel @Inject constructor(
                 return@launch
             }
             val json = gachaDataImporter.exportToString(uid)
-            val fileName = "UIGF_${uid}_${System.currentTimeMillis()}.json"
+            val fileName = run {
+                val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                val timeStr = sdf.format(java.util.Date())
+                "UIGF_v3.0_${uid}_${timeStr}.json"
+            }
             try {
                 // 使用 MediaStore 写入 Download 目录，兼容 Android 10+
                 val resolver = context.contentResolver
