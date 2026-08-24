@@ -1,0 +1,320 @@
+package com.genshin.gachahelper.sync
+
+import android.content.Context
+import android.net.Uri
+import com.genshin.gachahelper.data.local.entity.AccountEntity
+import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
+import com.genshin.gachahelper.data.model.GachaType
+import com.genshin.gachahelper.data.model.ItemType
+import com.genshin.gachahelper.data.repository.GachaRepository
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * 导入结果
+ */
+data class ImportResult(
+    val success: Boolean,
+    val totalImported: Int,
+    val skipped: Int,
+    val uid: String,
+    val message: String,
+    val errors: List<String> = emptyList()
+)
+
+/**
+ * 抽卡历史数据导入器
+ *
+ * 支持 UIGF (Uniformed GachaLog Record Format) 格式导入：
+ * - UIGF v3.x: { info: {...}, list: [...] }
+ * - UIGF v4.0: { info: {...}, hk4e: { uid, region, list: [...] } }
+ * - 兼容其他常见格式（纯数组、list 顶层等）
+ *
+ * UIGF 字段映射：
+ * - gacha_type → poolType (301/302/200)
+ * - time       → time
+ * - name       → itemName
+ * - item_type  → itemType (角色/武器)
+ * - rank_type  → rarity (5/4/3)
+ * - id         → orderNumber
+ */
+@Singleton
+class GachaDataImporter @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val gachaRepository: GachaRepository
+) {
+
+    /**
+     * 从文件 URI 导入抽卡记录
+     */
+    suspend fun importFromUri(uri: Uri): ImportResult = withContext(Dispatchers.IO) {
+        try {
+            val jsonString = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                inputStream.bufferedReader().use { it.readText() }
+            }
+            if (jsonString.isNullOrBlank()) {
+                return@withContext ImportResult(false, 0, 0, "", "无法读取文件")
+            }
+
+            importFromString(jsonString)
+        } catch (e: Exception) {
+            ImportResult(false, 0, 0, "", "读取文件异常: ${e.message}")
+        }
+    }
+
+    /**
+     * 从 JSON 字符串导入抽卡记录
+     */
+    suspend fun importFromString(jsonString: String): ImportResult = withContext(Dispatchers.IO) {
+        val errors = mutableListOf<String>()
+
+        try {
+            val root = JsonParser.parseString(jsonString).asJsonObject
+
+            // 自动检测 UIGF 版本
+            val parsed: Quad? = when {
+                // UIGF v4.0: { info, hk4e: { uid, region, list } }
+                root.has("hk4e") -> {
+                    val hk4e = root.getAsJsonObject("hk4e")
+                    val u = hk4e.get("uid")?.asString ?: ""
+                    val r = hk4e.get("region")?.asString ?: "cn_gf01"
+                    val list = hk4e.getAsJsonArray("list")
+                    Quad(u, r, list, true)
+                }
+                // UIGF v3.x: { info: { uid }, list: [...] }
+                root.has("info") && root.has("list") -> {
+                    val info = root.getAsJsonObject("info")
+                    val u = info.get("uid")?.asString ?: ""
+                    val r = info.get("region")?.asString ?: "cn_gf01"
+                    val list = root.getAsJsonArray("list")
+                    Quad(u, r, list, false)
+                }
+                // 纯数组: [...]
+                root.isJsonArray -> {
+                    val list = root.asJsonArray
+                    Quad("", "cn_gf01", list, false)
+                }
+                // 其他：尝试取 list
+                root.has("list") -> {
+                    val list = root.getAsJsonArray("list")
+                    val info = root.getAsJsonObject("info")
+                    val u = info?.get("uid")?.asString ?: ""
+                    Quad(u, "cn_gf01", list, false)
+                }
+                else -> null
+            }
+
+            if (parsed == null) {
+                return@withContext ImportResult(false, 0, 0, "", "无法识别的 JSON 格式，请确认文件为 UIGF 格式")
+            }
+
+            val (uid, region, listArray, isV4) = parsed
+
+            if (listArray == null || listArray.size() == 0) {
+                return@withContext ImportResult(true, 0, 0, uid, "文件中没有抽卡记录数据")
+            }
+
+            // 确定导入的 UID
+            val effectiveUid = uid.ifBlank {
+                // 从记录中尝试提取 UID（某些格式把 uid 放在记录中）
+                listArray.firstOrNull()?.asJsonObject?.get("uid")?.asString ?: ""
+            }
+
+            if (effectiveUid.isBlank()) {
+                return@withContext ImportResult(false, 0, 0, "", "无法确定 UID，请确认文件包含 UID 信息")
+            }
+
+            // 查找或创建账号
+            var account = gachaRepository.getAccountByUid(effectiveUid)
+            if (account == null) {
+                val accountId = gachaRepository.insertAccount(
+                    AccountEntity(
+                        uid = effectiveUid,
+                        server = region,
+                        nickname = null,
+                        createTime = System.currentTimeMillis(),
+                        lastSyncTime = System.currentTimeMillis()
+                    )
+                )
+                account = gachaRepository.getAccountByUid(effectiveUid)
+            }
+
+            val accountId = account?.id
+                ?: return@withContext ImportResult(false, 0, 0, effectiveUid, "创建账号失败")
+
+            // 解析并插入记录
+            val records = mutableListOf<GachaRecordEntity>()
+            var skipped = 0
+
+            for (item in listArray) {
+                try {
+                    val obj = item.asJsonObject
+                    val record = parseRecord(obj, accountId)
+                    if (record != null) {
+                        records.add(record)
+                    } else {
+                        skipped++
+                    }
+                } catch (e: Exception) {
+                    skipped++
+                    if (errors.size < 5) {
+                        errors.add("记录解析失败: ${e.message}")
+                    }
+                }
+            }
+
+            if (records.isEmpty()) {
+                return@withContext ImportResult(true, 0, skipped, effectiveUid, "没有可导入的有效记录", errors)
+            }
+
+            // 批量插入（IGNORE 策略自动去重）
+            val inserted = gachaRepository.insertRecords(records)
+
+            ImportResult(
+                success = true,
+                totalImported = inserted,
+                skipped = skipped + (records.size - inserted), // 解析跳过 + 重复跳过
+                uid = effectiveUid,
+                message = if (inserted > 0)
+                    "导入成功！新增 $inserted 条记录${if (records.size - inserted > 0) "，跳过 ${records.size - inserted} 条重复" else ""}"
+                else
+                    "所有记录均与已有数据重复，未新增",
+                errors = errors
+            )
+        } catch (e: Exception) {
+            ImportResult(false, 0, 0, "", "解析异常: ${e.message}")
+        }
+    }
+
+    /**
+     * 解析单条 UIGF 记录
+     */
+    private fun parseRecord(obj: JsonObject, accountId: Long): GachaRecordEntity? {
+        // gacha_type: 必需，301/302/200/100
+        val gachaType = obj.get("gacha_type")?.asInt ?: return null
+
+        // 验证是否为有效的卡池类型
+        val validTypes = setOf(301, 302, 200, 100)
+        if (gachaType !in validTypes) return null
+
+        // time: 必需
+        val time = obj.get("time")?.asString ?: return null
+        if (time.isBlank()) return null
+
+        // name: 必需
+        val itemName = obj.get("name")?.asString ?: return null
+        if (itemName.isBlank()) return null
+
+        // item_type: 可选，角色/武器
+        val itemTypeStr = obj.get("item_type")?.asString ?: ""
+        val itemType = when {
+            itemTypeStr.contains("角色") || itemTypeStr.equals("character", true) -> ItemType.CHARACTER.value
+            itemTypeStr.contains("武器") || itemTypeStr.equals("weapon", true) -> ItemType.WEAPON.value
+            else -> ItemType.OTHER.value
+        }
+
+        // rank_type: 可选，5/4/3
+        val rankStr = obj.get("rank_type")?.asString
+            ?: obj.get("rarity")?.asString
+            ?: obj.get("rank")?.asString
+            ?: "3"
+        val rarity = when {
+            rankStr.contains("5") -> 5
+            rankStr.contains("4") -> 4
+            rankStr.contains("3") -> 3
+            rankStr.toIntOrNull() != null -> rankStr.toInt()
+            else -> 3
+        }
+
+        // id / orderNumber: 必需（去重关键）
+        val orderNumber = obj.get("id")?.asString
+            ?: obj.get("order_number")?.asString
+            ?: obj.get("record_id")?.asString
+            ?: return null
+
+        return GachaRecordEntity(
+            accountId = accountId,
+            poolType = gachaType,
+            itemName = itemName,
+            itemType = itemType,
+            rarity = rarity,
+            time = time,
+            orderNumber = orderNumber
+        )
+    }
+
+    /**
+     * 导出抽卡记录为 UIGF v3.0 JSON 字符串
+     */
+    suspend fun exportToString(uid: String, includeInfo: Boolean = true): String =
+        withContext(Dispatchers.IO) {
+            val account = gachaRepository.getAccountByUid(uid)
+                ?: return@withContext "{\"info\":{},\"list\":[]}"
+
+            val allRecords = mutableListOf<GachaRecordEntity>()
+            for (pool in listOf(GachaType.CHARACTER, GachaType.WEAPON, GachaType.STANDARD, GachaType.NOVICE)) {
+                allRecords.addAll(gachaRepository.getRecordsByPool(account.id, pool.value))
+            }
+
+            // 按时间排序（从旧到新）
+            allRecords.sortBy { it.time }
+
+            val listJson = allRecords.joinToString(",\n") { record ->
+                val itemTypeStr = when (record.itemType) {
+                    ItemType.CHARACTER.value -> "角色"
+                    ItemType.WEAPON.value -> "武器"
+                    else -> "其他"
+                }
+                """    {
+        "gacha_type": ${record.poolType},
+        "time": "${record.time}",
+        "name": "${escapeJson(record.itemName)}",
+        "item_type": "$itemTypeStr",
+        "rank_type": "${record.rarity}",
+        "id": "${record.orderNumber}"
+    }""".trimIndent()
+            }
+
+            val infoJson = if (includeInfo) {
+                val timestamp = System.currentTimeMillis() / 1000
+                """"info": {
+    "uid": "$uid",
+    "lang": "zh-cn",
+    "export_time": "${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}",
+    "export_timestamp": $timestamp,
+    "export_app": "GenshinGachaHelper",
+    "export_app_version": "1.0.0",
+    "uigf_version": "3.0"
+},
+"""
+            } else {
+                ""
+            }
+
+            """{
+$infoJson"list": [
+$listJson
+]
+}"""
+        }
+
+    private fun escapeJson(str: String): String {
+        return str.replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+    }
+
+    private data class Quad(
+        val uid: String,
+        val region: String,
+        val list: com.google.gson.JsonArray?,
+        val isV4: Boolean
+    )
+}

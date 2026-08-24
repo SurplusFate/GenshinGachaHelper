@@ -1,0 +1,102 @@
+package com.genshin.gachahelper.ui
+
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.genshin.gachahelper.ui.auth.AuthScreen
+import com.genshin.gachahelper.ui.history.HistoryScreen
+import com.genshin.gachahelper.ui.home.HomeScreen
+import com.genshin.gachahelper.ui.navigation.Screen
+import com.genshin.gachahelper.ui.navigation.bottomNavItems
+import com.genshin.gachahelper.ui.report.ReportScreen
+import com.genshin.gachahelper.ui.settings.SettingsScreen
+import com.genshin.gachahelper.ui.stats.StatsScreen
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GachaAppNavHost() {
+    val navController = rememberNavController()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
+
+    val showBottomBar = currentDestination?.route in bottomNavItems.map { it.route }
+    val currentScreen = bottomNavItems.firstOrNull { it.route == currentDestination?.route }
+
+    Scaffold(
+        topBar = {
+            if (currentScreen != null) {
+                TopAppBar(title = { Text(currentScreen.title) })
+            } else if (currentDestination?.route == Screen.Auth.route) {
+                TopAppBar(
+                    title = { Text("授权登录") },
+                    navigationIcon = {
+                        IconButton(onClick = { navController.navigateUp() }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                        }
+                    }
+                )
+            } else if (currentDestination?.route == "report") {
+                TopAppBar(
+                    title = { Text("抽卡报告") },
+                    navigationIcon = {
+                        IconButton(onClick = { navController.navigateUp() }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                        }
+                    }
+                )
+            }
+        },
+        bottomBar = {
+            if (showBottomBar) {
+                NavigationBar {
+                    bottomNavItems.forEach { screen ->
+                        NavigationBarItem(
+                            icon = { Icon(screen.icon, contentDescription = screen.title) },
+                            label = { Text(screen.title) },
+                            selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
+                            onClick = {
+                                navController.navigate(screen.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    ) { innerPadding ->
+        NavHost(
+            navController = navController,
+            startDestination = Screen.Home.route,
+            modifier = Modifier.padding(innerPadding)
+        ) {
+            composable(Screen.Home.route) { HomeScreen(navController) }
+            composable(Screen.History.route) { HistoryScreen() }
+            composable(Screen.Stats.route) { StatsScreen(navController) }
+            composable(Screen.Settings.route) { SettingsScreen() }
+            composable(Screen.Auth.route) { AuthScreen(navController) }
+            composable("report") { ReportScreen() }
+        }
+    }
+}
