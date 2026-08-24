@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.analysis.GachaReport
 import com.genshin.gachahelper.analysis.GachaStatsCalculator
 import com.genshin.gachahelper.auth.AuthRepository
+import com.genshin.gachahelper.core.SessionEvent
+import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -18,6 +20,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
@@ -32,43 +36,62 @@ class ReportViewModel @Inject constructor(
     private val gachaRepository: GachaRepository,
     private val authRepository: AuthRepository,
     private val statsCalculator: GachaStatsCalculator,
+    private val sessionEventBus: SessionEventBus,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ReportUiState())
     val uiState: StateFlow<ReportUiState> = _uiState.asStateFlow()
 
+    // 串行化 loadReport，避免事件并发触发时多次重叠写 _uiState
+    private val loadMutex = Mutex()
+
     init {
+        // 监听全局会话事件：同步/导入/登录/退出/清除后重新生成报告
+        viewModelScope.launch {
+            sessionEventBus.events.collect { event ->
+                when (event) {
+                    SessionEvent.LoginCompleted,
+                    SessionEvent.DataImported,
+                    SessionEvent.DataSynced,
+                    SessionEvent.LogoutCompleted,
+                    SessionEvent.DataCleared -> loadReport()
+                }
+            }
+        }
         loadReport()
     }
 
     private fun loadReport() {
         viewModelScope.launch {
-            val uid = authRepository.getUid()
-            val account = gachaRepository.getAccountByUid(uid ?: "")
+            loadMutex.withLock {
+                _uiState.value = _uiState.value.copy(isLoading = true)
+                val uid = authRepository.getUid()
+                val account = gachaRepository.getAccountByUid(uid ?: "")
 
-            if (account == null) {
-                _uiState.value = ReportUiState(isLoading = false)
-                return@launch
+                if (account == null) {
+                    _uiState.value = ReportUiState(isLoading = false)
+                    return@withLock
+                }
+
+                val characterRecords = gachaRepository.getRecordsByPool(
+                    account.id, GachaType.CHARACTER.value
+                )
+                val weaponRecords = gachaRepository.getRecordsByPool(
+                    account.id, GachaType.WEAPON.value
+                )
+                val standardRecords = gachaRepository.getRecordsByPool(
+                    account.id, GachaType.STANDARD.value
+                )
+
+                val report = statsCalculator.generateReport(
+                    characterRecords = characterRecords,
+                    weaponRecords = weaponRecords,
+                    standardRecords = standardRecords
+                )
+
+                _uiState.value = ReportUiState(report = report, isLoading = false)
             }
-
-            val characterRecords = gachaRepository.getRecordsByPool(
-                account.id, GachaType.CHARACTER.value
-            )
-            val weaponRecords = gachaRepository.getRecordsByPool(
-                account.id, GachaType.WEAPON.value
-            )
-            val standardRecords = gachaRepository.getRecordsByPool(
-                account.id, GachaType.STANDARD.value
-            )
-
-            val report = statsCalculator.generateReport(
-                characterRecords = characterRecords,
-                weaponRecords = weaponRecords,
-                standardRecords = standardRecords
-            )
-
-            _uiState.value = ReportUiState(report = report, isLoading = false)
         }
     }
 

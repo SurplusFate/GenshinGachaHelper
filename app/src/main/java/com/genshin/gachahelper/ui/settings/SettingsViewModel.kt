@@ -48,6 +48,20 @@ class SettingsViewModel @Inject constructor(
     val importMessage: StateFlow<String?> = _importMessage.asStateFlow()
 
     init {
+        // 监听全局会话事件：登录/退出/导入/清除后需重新 loadSettings 以刷新登录态与配置显示
+        // 否则用户先访问过 Settings（ViewModel 已 saveState 存活），后续登录/退出后切回
+        // Settings 会看到旧的"未登录/旧 UID"状态，必须重启 App 才刷新。
+        viewModelScope.launch {
+            sessionEventBus.events.collect { event ->
+                when (event) {
+                    SessionEvent.LoginCompleted,
+                    SessionEvent.LogoutCompleted,
+                    SessionEvent.DataCleared,
+                    SessionEvent.DataImported -> loadSettings()
+                    else -> Unit
+                }
+            }
+        }
         loadSettings()
     }
 
@@ -146,7 +160,10 @@ class SettingsViewModel @Inject constructor(
                 gachaRepository.deleteAccount(account.id)
             }
             authRepository.logout()
+            // logout 同时删除了账号与全部抽卡数据，需同时通知数据已清除，
+            // 否则仅监听 DataCleared 的逻辑无法被触发（语义上数据确实被清了）。
             sessionEventBus.emit(SessionEvent.LogoutCompleted)
+            sessionEventBus.emit(SessionEvent.DataCleared)
             loadSettings()
         }
     }

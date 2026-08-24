@@ -107,6 +107,27 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-24 · 修复登录后页面刷新不及时（commit 待提交）
+
+**现象**：APP 登录后部分页面（尤其 Settings）刷新不及时，需退出 App 重进才能看到新登录态/UID/昵称。
+
+**根因**：`SettingsViewModel` 已注入 `SessionEventBus`，但 `init` 只调用 `loadSettings()`，**从未启动事件 collector**。底部导航的 ViewModel 在 saveState 模式下被长期保留，一旦用户先访问过 Settings，后续登录/退出后切回 Settings，SettingsViewModel 仍是同一个实例且没收到任何事件，UI 停留在旧的"未登录/旧 UID"状态，必须重启 App 触发 ViewModel 重建与 `init { loadSettings() }` 才刷新。
+
+**修复**：
+1. `SettingsViewModel.init` 新增 `sessionEventBus.events` collector，收到
+   `LoginCompleted`/`LogoutCompleted`/`DataCleared`/`DataImported` 时 `loadSettings()`
+   刷新登录态与配置显示；`DataSynced` 走 `else` 不响应（同步不改配置）。
+2. `ReportViewModel` 注入 `SessionEventBus` 并订阅全部 5 类事件 → `loadReport()`，
+   与 Home/Stats/History 行为一致；并加 `Mutex` 串行化 `loadReport`，避免事件并发
+   触发时多次重叠写 `_uiState`。原 ReportViewModel 完全没订阅事件，靠每次进入页面
+   重建 ViewModel 才刷新，停在 Report 页期间同步/导入数据不会更新。
+3. `SettingsViewModel.logout` 补发 `DataCleared`：logout 同时删除了账号与全部抽卡数据，
+   只发 `LogoutCompleted` 会让仅监听 `DataCleared` 的逻辑无法被触发。现两个事件都发，
+   Home/Stats/History 对两个事件的处理都是幂等重置，无副作用。
+
+**对照**：本轮把"不及时"的根因（Settings 漏订阅事件）补齐，并把 Report 也对齐到事件驱动。
+审查清单中"重要"组关于 `GachaSyncService.syncAll` 并发非原子的待办仍未处理。
+
 ### 2026-08-24 · 性能优化（commit `b5b07be`）
 
 针对全量审查中标注为"重要/一般"且可低风险落地的性能项做集中优化。
