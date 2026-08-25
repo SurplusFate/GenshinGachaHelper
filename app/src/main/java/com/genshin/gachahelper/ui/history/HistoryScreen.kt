@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,21 +46,59 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.paging.LoadState
+import androidx.paging.PagingData
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemContentType
+import androidx.paging.compose.itemKey
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.ui.theme.FiveStarColor
 import com.genshin.gachahelper.ui.theme.FourStarColor
 import com.genshin.gachahelper.ui.theme.ThreeStarColor
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 /**
- * 列表项类型：把分页数据按日期分组后拍平成线性结构，便于插入粘性头。
+ * 列表项类型：把分页数据按日期分组后拍平成线性结构，便于插入日期分组头。
+ *
+ * 改造说明（修复"历史数据显示不全"）：
+ * - 不再在 remember{} 里用 LazyPagingItems.peek(i) 预扫描，因为 peek 不会触发下一页加载，
+ *   且 remember 的快照只在 itemCount 改变时重建，首帧只加载 1~2 页时 UI 看起来像"缺数据"。
+ * - 改为把上游 Flow<PagingData<GachaRecordEntity>> map 成 Flow<PagingData<HistoryListItem>>，
+ *   PagingData 变换保留原始 Paging 语义，插入的 Header 不参与分页计数，仅对显示做装饰。
  */
-private sealed interface HistoryListItem {
+sealed interface HistoryListItem {
     data class Header(val date: String) : HistoryListItem
-    data class Record(val index: Int, val record: GachaRecordEntity) : HistoryListItem
+    data class Record(val record: GachaRecordEntity) : HistoryListItem
 }
+
+/**
+ * 把 PagingData<Record> 按相邻记录的日期差插入 Header，得到 PagingData<HistoryListItem>。
+ *
+ * 实现要点：
+ * - PagingData 流每次产生一个新快照（refresh 或 filter 变更后）都会新建一个 lastDate 状态，
+ *   因此"上一条记录的日期"只在同一份 PagingData 内复用，不会跨不同 Flow/Pager 污染。
+ * - 同一份 PagingData 内，`map` 会按 items 在数据源中的顺序（time DESC，最新在前）依次访问，
+ *   因此相邻 item 的比较是正确的——只要 `date != lastDate`，就说明进入了新的日期分组，
+ *   在该条 Record 前插入一个 Header。
+ * - 这里的 lambda 有状态是被官方 Paging 示例（Separations）采用的模式，
+ *   每次 PagingData 新实例重置 lastDate，避免跨加载串味。
+ */
+private fun Flow<PagingData<GachaRecordEntity>>.withDateHeaders(): Flow<PagingData<HistoryListItem>> =
+    map { pagingData ->
+        var lastDate: String? = null
+        pagingData.flatMap { record ->
+            val date = if (record.time.length >= 10) record.time.substring(0, 10) else record.time
+            buildList {
+                if (lastDate != date) {
+                    add(HistoryListItem.Header(date))
+                    lastDate = date
+                }
+                add(HistoryListItem.Record(record))
+            }
+        }
+    }
 
 @Composable
 fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
@@ -68,15 +107,24 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     val summary by viewModel.summary.collectAsState()
     val fiveStarIntervals by viewModel.fiveStarIntervals.collectAsState()
     val dailyStats by viewModel.dailyStats.collectAsState()
-    val records: LazyPagingItems<GachaRecordEntity> = viewModel.records.collectAsLazyPagingItems()
+
+    // 给 Paging 记录加上日期头（按每个 record 的 time 日期相邻性插入 Header）。
+    // key 含 filter 三元组：filter 变更时重新 map（避免旧日期头残留）。
+    val decoratedRecordsFlow: Flow<PagingData<HistoryListItem>> = remember(
+        filter.poolType,
+        filter.rarity,
+        filter.searchQuery
+    ) {
+        viewModel.records.withDateHeaders()
+    }
+    val records: LazyPagingItems<HistoryListItem> =
+        decoratedRecordsFlow.collectAsLazyPagingItems()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 搜索栏
         SearchBar(query = searchQuery, onQueryChange = viewModel::setSearchQuery)
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // 筛选 Chips
         FilterChips(
             filter = filter,
             onPoolChange = viewModel::setPoolFilter,
@@ -85,57 +133,105 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 统计摘要栏
         SummaryBar(summary = summary)
 
-        // 列表（日期分组 + 粘性头）
-        val isEmpty = records.itemCount == 0 &&
-            records.loadState.refresh is LoadState.NotLoading
+        val refresh = records.loadState.refresh
+        val isEmpty = records.itemCount == 0 && refresh is LoadState.NotLoading
 
-        if (isEmpty) {
-            EmptyState(modifier = Modifier.weight(1f))
-        } else {
-            // 把已加载的分页数据按日期拍平，在日期切换处插入分组头
-            // key 必须同时包含 filter 三元组：同一 itemCount 下 filter 不同也必须重建（N5 修复）
-            val listItems = remember(
-                records.itemCount,
-                filter.poolType,
-                filter.rarity,
-                filter.searchQuery
-            ) {
-                buildList<HistoryListItem> {
-                    var lastDate: String? = null
-                    for (i in 0 until records.itemCount) {
-                        val record = records.peek(i) ?: continue
-                        val date = if (record.time.length >= 10) record.time.substring(0, 10) else record.time
-                        if (date != lastDate) {
-                            add(HistoryListItem.Header(date))
-                            lastDate = date
-                        }
-                        add(HistoryListItem.Record(i, record))
-                    }
+        when {
+            refresh is LoadState.Loading && records.itemCount == 0 -> {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
                 }
             }
-
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                listItems.forEach { listItem ->
-                    when (listItem) {
-                        is HistoryListItem.Header -> {
-                            val dayStat = dailyStats[listItem.date]
-                            item(key = "header_${listItem.date}") {
-                                DateHeader(date = listItem.date, dayStat = dayStat)
+            isEmpty -> {
+                EmptyState(modifier = Modifier.weight(1f))
+            }
+            else -> {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    // 用 Paging 的 items(count)，key/contentType 按类型区分：
+                    // - Header: key=date, type="header"
+                    // - Record: key=orderNumber, type="record"
+                    items(
+                        count = records.itemCount,
+                        key = records.itemKey { item ->
+                            when (item) {
+                                is HistoryListItem.Header -> "header_${item.date}"
+                                is HistoryListItem.Record -> "record_${item.record.orderNumber}"
+                            }
+                        },
+                        contentType = records.itemContentType { item ->
+                            when (item) {
+                                is HistoryListItem.Header -> "history_header"
+                                is HistoryListItem.Record -> "history_record"
                             }
                         }
-                        is HistoryListItem.Record -> {
-                            item(key = listItem.record.orderNumber) {
+                    ) { index ->
+                        when (val item = records[index]) {
+                            is HistoryListItem.Header -> {
+                                val dayStat = dailyStats[item.date]
+                                DateHeader(date = item.date, dayStat = dayStat)
+                            }
+                            is HistoryListItem.Record -> {
                                 RecordItem(
-                                    record = listItem.record,
-                                    poolTypeName = viewModel.getPoolTypeName(listItem.record.poolType),
-                                    interval = fiveStarIntervals[listItem.record.orderNumber]
+                                    record = item.record,
+                                    poolTypeName = viewModel.getPoolTypeName(item.record.poolType),
+                                    interval = fiveStarIntervals[item.record.orderNumber]
+                                )
+                            }
+                            null -> {
+                                // Paging placeholder disabled，理论上不会走到这里
+                                Spacer(modifier = Modifier.height(48.dp))
+                            }
+                        }
+                    }
+
+                    // Paging 追加加载状态：滚动到底部时显示"加载中 / 加载失败重试"
+                    when (val append = records.loadState.append) {
+                        is LoadState.Loading -> {
+                            item {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                }
+                            }
+                        }
+                        is LoadState.Error -> {
+                            item {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "加载失败：${append.error.message?.take(40) ?: ""}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                        else -> {}
+                    }
+
+                    // 刷新失败：首屏顶部显示错误（如果首屏未加载但刷新报错）
+                    if (refresh is LoadState.Error) {
+                        item {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.errorContainer
+                            ) {
+                                Text(
+                                    modifier = Modifier.padding(12.dp),
+                                    text = "刷新失败：${refresh.error.message ?: "未知错误"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
                                 )
                             }
                         }

@@ -240,15 +240,37 @@ class GachaDataImporter @Inject constructor(
      * @param rarityMap 从有 rank_type 的记录构建的 name→rarity 映射（第一遍扫描结果）
      */
     private fun parseRecord(obj: JsonObject, accountId: Long, rarityMap: Map<String, Int>): GachaRecordEntity? {
-        // gacha_type: 必需，支持 301/400/302/200/100/500
-        // 注意：UIGF v2.2 文件中 gacha_type 可能是字符串（如 "400"），也可能带 uigf_gacha_type 字段
+        // gacha_type: 必需，支持 301/400/302/200/100/800
+        // 注意：UIGF 文件中 gacha_type 可能是字符串（如 "400"），也可能带 uigf_gacha_type 字段
         // 对于 gacha_type=400（角色活动祈愿-2），保留原始类型，不用 uigf_gacha_type 覆盖
-        val gachaType = obj.get("gacha_type")?.let {
+        // 集录祈愿历史上曾用 500 作为 gacha_type，现代 HoYoLab / UIGF 统一是 800，这里两者都接受，
+        // 入库前统一标准化成 GachaType.CHRONICLED.value，避免旧导入 / 新导入分裂成两个池。
+        val rawGachaType = obj.get("gacha_type")?.let {
             try { it.asInt } catch (_: Exception) { it.asString.toIntOrNull() }
-        } ?: return null
+        } ?: run {
+            // 回退：少数 UIGF v2/v3 文件只有 uigf_gacha_type 字段，没写 gacha_type
+            obj.get("uigf_gacha_type")?.let {
+                try { it.asInt } catch (_: Exception) { it.asString.toIntOrNull() }
+            } ?: return null
+        }
 
-        // 验证是否为有效的卡池类型（400 = 角色活动祈愿-2）
-        val validTypes = setOf(301, 400, 302, 200, 100, 500)
+        // 兼容映射：把历史 500（旧版集录 gacha_type）统一到 800，避免新旧数据分池。
+        // 其他 gacha_type 保持原值。
+        val gachaType = when (rawGachaType) {
+            500 -> GachaType.CHRONICLED.value
+            else -> rawGachaType
+        }
+
+        // 验证是否为有效的卡池类型：
+        // 100=新手 / 200=常驻 / 301=角色 / 302=武器 / 400=角色-2 / 800=集录
+        val validTypes = setOf(
+            GachaType.NOVICE.value,
+            GachaType.STANDARD.value,
+            GachaType.CHARACTER.value,
+            GachaType.WEAPON.value,
+            GachaType.CHARACTER_2.value,
+            GachaType.CHRONICLED.value
+        )
         if (gachaType !in validTypes) return null
 
         // time: 必需

@@ -13,12 +13,11 @@ import javax.inject.Singleton
 class GachaStatsCalculator @Inject constructor() {
 
     companion object {
-        // 保底上限
-        // 说明：
-        // - 角色池(301/400)/常驻/集录：90 抽五星保底
-        // - 武器神铸赋形(500)：80 抽五星保底
-        // - 新手祈愿(100)：无五星保底，上限仅 20 抽，抽满自动关闭；这里 piyCeiling 记为 20 是「池总抽数」
-        //   不是"X 抽必出五星"的保底阈值，UI 层会特殊处理新手池的文案。
+        // 保底上限（与卡池枚举 GachaType.value 对应：
+        // 角色池(301) / 角色池-2(400) / 常驻(200) / 集录(800)：90 抽五星保底
+        // 武器神铸赋形(302)：80 抽五星保底
+        // 新手祈愿(100)：无五星保底，上限仅 20 抽，抽满自动关闭；此处 pityCeiling = 20
+        //   是「池总抽数」而不是 X 抽必出五星的阈值，UI 层会特殊处理新手池的文案。
         private const val CHARACTER_PITY_CEILING = 90
         private const val CHARACTER_2_PITY_CEILING = 90
         private const val WEAPON_PITY_CEILING = 80
