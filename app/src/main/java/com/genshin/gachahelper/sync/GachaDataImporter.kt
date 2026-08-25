@@ -7,6 +7,8 @@ import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.model.GachaItemDatabase
 import com.genshin.gachahelper.data.model.ItemType
+import com.genshin.gachahelper.data.model.parseItemType
+import com.genshin.gachahelper.data.model.parseRarity
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -159,16 +161,8 @@ class GachaDataImporter @Inject constructor(
                         ?: obj.get("rank")?.asString
                         ?: null
                     if (rankStr != null) {
-                        val r = when {
-                            rankStr.contains("5") -> 5
-                            rankStr.contains("4") -> 4
-                            rankStr.contains("3") -> 3
-                            rankStr.toIntOrNull() != null -> rankStr.toInt()
-                            else -> 0
-                        }
-                        if (r > 0) {
-                            rarityMap[name] = r
-                        }
+                        val r = parseRarity(rankStr)
+                        rarityMap[name] = r
                     }
                 } catch (_: Exception) { }
             }
@@ -267,11 +261,7 @@ class GachaDataImporter @Inject constructor(
 
         // item_type: 可选，角色/武器
         val itemTypeStr = obj.get("item_type")?.asString ?: ""
-        val itemType = when {
-            itemTypeStr.contains("角色") || itemTypeStr.equals("character", true) -> ItemType.CHARACTER.value
-            itemTypeStr.contains("武器") || itemTypeStr.equals("weapon", true) -> ItemType.WEAPON.value
-            else -> ItemType.OTHER.value
-        }
+        val itemType = parseItemType(itemTypeStr)
 
         // rank_type: 可选，5/4/3。缺失时根据物品名称推断
         val rankStr = obj.get("rank_type")?.asString
@@ -280,14 +270,8 @@ class GachaDataImporter @Inject constructor(
             ?: null
 
         val rarity = if (rankStr != null) {
-            // rank_type 存在时直接使用
-            when {
-                rankStr.contains("5") -> 5
-                rankStr.contains("4") -> 4
-                rankStr.contains("3") -> 3
-                rankStr.toIntOrNull() != null -> rankStr.toInt()
-                else -> 3
-            }
+            // rank_type 存在时使用统一解析器（parseRarity），保持与 API 响应解析一致
+            parseRarity(rankStr)
         } else {
             // rank_type 缺失：优先查 rarityMap（同文件中其他记录提供了该物品的稀有度）
             // 其次用 GachaItemDatabase 根据物品名称推断

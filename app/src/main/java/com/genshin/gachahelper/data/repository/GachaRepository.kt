@@ -100,9 +100,6 @@ class GachaRepository @Inject constructor(
     suspend fun deleteAllByAccount(accountId: Long) =
         gachaRecordDao.deleteAllByAccount(accountId)
 
-    suspend fun getLatestOrderNumber(accountId: Long, poolType: Int): String? =
-        gachaRecordDao.getLatestOrderNumber(accountId, poolType)
-
     suspend fun getRecordKeysByAccount(accountId: Long): List<RecordKey> =
         gachaRecordDao.getRecordKeysByAccount(accountId)
 

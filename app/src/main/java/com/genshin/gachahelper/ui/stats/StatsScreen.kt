@@ -60,6 +60,7 @@ import com.genshin.gachahelper.analysis.GachaReport
 import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.data.local.dao.GachaRecordDao.DailyStat
 import com.genshin.gachahelper.data.local.dao.GachaRecordDao.ItemCount
+import com.genshin.gachahelper.ui.navigation.Screen
 import com.genshin.gachahelper.ui.theme.FiveStarColor
 import com.genshin.gachahelper.ui.theme.FourStarColor
 import com.genshin.gachahelper.ui.theme.ThreeStarColor
@@ -235,7 +236,7 @@ private fun OverviewTab(report: GachaReport, navController: NavController) {
 
         // 生成报告按钮
         Button(
-            onClick = { navController.navigate("report") },
+            onClick = { navController.navigate(Screen.Report.route) },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("生成抽卡报告")

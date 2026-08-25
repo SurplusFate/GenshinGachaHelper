@@ -28,8 +28,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,22 +60,6 @@ fun AuthScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 登录方式切换 Tab
-        if (uiState.phase == AuthPhase.QR_DISPLAY ||
-            uiState.phase == AuthPhase.WEBVIEW_LOGIN ||
-            uiState.phase == AuthPhase.LOADING
-        ) {
-            LoginMethodTabRow(
-                selectedMethod = uiState.loginMethod,
-                onMethodChange = { method ->
-                    when (method) {
-                        LoginMethod.QR_CODE -> viewModel.switchToQrCode()
-                        LoginMethod.WEBVIEW -> viewModel.switchToWebView()
-                    }
-                }
-            )
-        }
-
         Box(modifier = Modifier.weight(1f)) {
             when (uiState.phase) {
                 AuthPhase.LOADING -> LoadingView(uiState.statusText)
@@ -112,28 +94,6 @@ fun AuthScreen(
                 )
             }
         }
-    }
-}
-
-@Composable
-fun LoginMethodTabRow(
-    selectedMethod: LoginMethod,
-    onMethodChange: (LoginMethod) -> Unit
-) {
-    TabRow(
-        selectedTabIndex = selectedMethod.ordinal,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Tab(
-            selected = selectedMethod == LoginMethod.WEBVIEW,
-            onClick = { onMethodChange(LoginMethod.WEBVIEW) },
-            text = { Text("验证码登录") }
-        )
-        Tab(
-            selected = selectedMethod == LoginMethod.QR_CODE,
-            onClick = { onMethodChange(LoginMethod.QR_CODE) },
-            text = { Text("扫码登录") }
-        )
     }
 }
 
@@ -342,7 +302,7 @@ fun QrCodeView(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "请使用分屏模式：长按底部任务键开启分屏，在另一半屏幕打开原神 → 设置 → 账号 → 扫码登录",
+                text = "请使用米游社 App 扫一扫登录，或在分屏模式下操作：长按底部任务键开启分屏，在另一半屏幕打开米游社 → 我的 → 扫一扫",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -353,7 +313,7 @@ fun QrCodeView(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "提示：需要分屏操作，截图扫码无法识别",
+                text = "提示：截图扫码可能无法识别，请使用米游社 App 或分屏操作",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -440,7 +400,7 @@ fun ScannedView(
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = statusText.ifBlank { "已扫描，请在游戏中确认登录" },
+                    text = statusText.ifBlank { "已扫描，请在米游社中确认登录" },
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     textAlign = TextAlign.Center

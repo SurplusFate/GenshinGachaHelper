@@ -52,9 +52,9 @@ fun GachaAppNavHost() {
                         }
                     }
                 )
-            } else if (currentDestination?.route == "report") {
+            } else if (currentDestination?.route == Screen.Report.route) {
                 TopAppBar(
-                    title = { Text("抽卡报告") },
+                    title = { Text(Screen.Report.title) },
                     navigationIcon = {
                         IconButton(onClick = { navController.navigateUp() }) {
                             Icon(Icons.Default.ArrowBack, contentDescription = "返回")
@@ -96,7 +96,7 @@ fun GachaAppNavHost() {
             composable(Screen.Stats.route) { StatsScreen(navController) }
             composable(Screen.Settings.route) { SettingsScreen() }
             composable(Screen.Auth.route) { AuthScreen(navController) }
-            composable("report") { ReportScreen() }
+            composable(Screen.Report.route) { ReportScreen() }
         }
     }
 }

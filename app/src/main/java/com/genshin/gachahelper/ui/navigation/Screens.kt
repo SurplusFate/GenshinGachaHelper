@@ -13,6 +13,7 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
     data object Stats : Screen("stats", "统计", Icons.Default.BarChart)
     data object Settings : Screen("settings", "设置", Icons.Default.Settings)
     data object Auth : Screen("auth", "授权登录", Icons.Default.Home)
+    data object Report : Screen("report", "抽卡报告", Icons.Default.BarChart)
 }
 
 val bottomNavItems = listOf(

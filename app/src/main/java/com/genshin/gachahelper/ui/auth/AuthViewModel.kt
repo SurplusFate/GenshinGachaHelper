@@ -39,7 +39,7 @@ class AuthViewModel @Inject constructor(
     private var pollCount = 0
 
     init {
-        switchToWebView()
+        switchToQrCode()
     }
 
     fun switchToQrCode() {
@@ -315,7 +315,7 @@ class AuthViewModel @Inject constructor(
                             phase = AuthPhase.QR_DISPLAY,
                             qrBitmap = null,
                             error = "[${result.step}] 获取凭证失败: ${result.message}",
-                            statusText = "请刷新二维码重试，或切换到验证码登录",
+                            statusText = "请刷新二维码重试",
                             debugInfo = result.rawResponse.takeIf { it.isNotBlank() }
                         )
                     }

@@ -89,6 +89,10 @@ class MihoyoApiService @Inject constructor(
         private const val API_PASSPORT_QUERY_QR =
             "$PASSPORT_BASE/account/ma-cn-passport/app/queryQRLoginStatus"
 
+        // 用 cookie_token 换 stoken（通行证 API，验证码/密码登录场景）
+        private const val API_GET_STOKEN_BY_COOKIE =
+            "$PASSPORT_BASE/account/auth/api/getAccountInfoByCookieToken"
+
         // 通行证 app_id 和 client_type
         private const val PASSPORT_APP_ID = "ddxf5dufpuyo"
         private const val PASSPORT_CLIENT_TYPE = "3"
@@ -351,6 +355,64 @@ class MihoyoApiService @Inject constructor(
             ApiResult.Success(ltoken)
         } catch (e: Exception) {
             ApiResult.Error("换取 ltoken 异常: ${e.message}", -1, "", "getLToken")
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P3c. 用 cookie_token 换 stoken（passport API，验证码/密码登录场景）
+    // WebView 验证码/密码登录后只有 cookie_token + ltoken，没有 stoken，
+    // 但 genAuthKey 需要 stoken 才能通过（retcode -100），
+    // 所以需要用 cookie_token 再去通行证换一份 stoken。
+    // ------------------------------------------------------------------
+    suspend fun getStokenByCookieToken(
+        cookieToken: String,
+        uid: String,
+        mid: String?
+    ): ApiResult<String> = withContext(Dispatchers.IO) {
+        try {
+            val cookieStr = buildString {
+                append("cookie_token_v2=$cookieToken")
+                append("; stuid=$uid; ltuid=$uid")
+                if (!mid.isNullOrBlank()) append("; mid=$mid")
+            }
+
+            val request = Request.Builder()
+                .url(API_GET_STOKEN_BY_COOKIE)
+                .addHeader("Cookie", cookieStr)
+                .addHeader("User-Agent", PASSPORT_UA)
+                .addHeader("x-rpc-app_id", PASSPORT_APP_ID)
+                .addHeader("x-rpc-client_type", PASSPORT_CLIENT_TYPE)
+                .addHeader("x-rpc-device_id", authRepository.getOrCreateDeviceId())
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Accept", "application/json")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            val respBody = response.body?.string() ?: ""
+
+            if (!response.isSuccessful) {
+                return@withContext ApiResult.Error("HTTP ${response.code}", response.code, respBody, "getStokenByCookie")
+            }
+
+            val json = JsonParser.parseString(respBody).asJsonObject
+            val retcode = json.get("retcode")?.asInt ?: -1
+            if (retcode != 0) {
+                val msg = json.get("message")?.asString ?: "未知错误"
+                return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "getStokenByCookie")
+            }
+
+            val data = json.getAsJsonObject("data")
+                ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "getStokenByCookie")
+
+            // 通行证返回的可能是 "stoken" 或列表里的 tokens[].token
+            val stoken = data.get("stoken")?.asString
+                ?: data.getAsJsonArray("tokens")?.firstOrNull()?.asJsonObject?.get("token")?.asString
+                ?: return@withContext ApiResult.Error("响应中未找到 stoken", -1, respBody, "getStokenByCookie")
+
+            ApiResult.Success(stoken)
+        } catch (e: Exception) {
+            ApiResult.Error("用 cookie_token 换 stoken 异常: ${e.message}", -1, "", "getStokenByCookie")
         }
     }
 

@@ -3,6 +3,8 @@ package com.genshin.gachahelper.remote
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaItemDatabase
 import com.genshin.gachahelper.data.model.ItemType
+import com.genshin.gachahelper.data.model.parseItemType
+import com.genshin.gachahelper.data.model.parseRarity
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -87,28 +89,11 @@ class GachaResponseParser @Inject constructor() {
         return element?.asString ?: ""
     }
 
-    private fun parseRarity(value: String): Int {
-        // 支持多种格式："5", "5星", "S" 等
-        return when {
-            value.equals("S", ignoreCase = true) -> 5
-            value.equals("A", ignoreCase = true) -> 4
-            value.equals("B", ignoreCase = true) -> 3
-            // 先尝试精确数值匹配，避免 "15" / "S5" 被误判为 5 星
-            value.matches(Regex("\\d+")) -> value.toIntOrNull()?.coerceIn(3, 5) ?: 3
-            value.contains("5") -> 5
-            value.contains("4") -> 4
-            value.contains("3") -> 3
-            else -> value.toIntOrNull() ?: 3
-        }
-    }
+    private fun parseRarity(value: String): Int =
+        com.genshin.gachahelper.data.model.parseRarity(value)
 
-    private fun parseItemType(value: String): Int {
-        return when {
-            value.contains("角色") || value.equals("character", ignoreCase = true) -> ItemType.CHARACTER.value
-            value.contains("武器") || value.equals("weapon", ignoreCase = true) -> ItemType.WEAPON.value
-            else -> ItemType.OTHER.value
-        }
-    }
+    private fun parseItemType(value: String): Int =
+        com.genshin.gachahelper.data.model.parseItemType(value)
 
     sealed class ParseResult {
         data class Success(val records: List<GachaRecordEntity>, val hasMore: Boolean) : ParseResult()
