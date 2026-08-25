@@ -14,11 +14,16 @@ class GachaStatsCalculator @Inject constructor() {
 
     companion object {
         // 保底上限
+        // 说明：
+        // - 角色池(301/400)/常驻/集录：90 抽五星保底
+        // - 武器神铸赋形(500)：80 抽五星保底
+        // - 新手祈愿(100)：无五星保底，上限仅 20 抽，抽满自动关闭；这里 piyCeiling 记为 20 是「池总抽数」
+        //   不是"X 抽必出五星"的保底阈值，UI 层会特殊处理新手池的文案。
         private const val CHARACTER_PITY_CEILING = 90
         private const val CHARACTER_2_PITY_CEILING = 90
         private const val WEAPON_PITY_CEILING = 80
         private const val STANDARD_PITY_CEILING = 90
-        private const val NOVICE_PITY_CEILING = 90
+        private const val NOVICE_PITY_CEILING = 20
         private const val CHRONICLED_PITY_CEILING = 90
 
         /**
@@ -96,7 +101,9 @@ class GachaStatsCalculator @Inject constructor() {
             fiveStarCount = fiveStarRecords.size,
             fourStarCount = fourStarCount,
             threeStarCount = threeStarCount,
-            currentPity = currentPity,
+            // 游戏机制内 currentPity < pityCeiling（90/80/20 之内必出或池关闭）。
+            // 如果脏数据（导入/解析错误漏了五星）导致超出，在此强制 clamp，避免 UI 进度条 100% 卡死。
+            currentPity = currentPity.coerceIn(0, pityCeiling - 1),
             pityCeiling = pityCeiling,
             lastFiveStarName = lastFiveStar?.itemName,
             lastFiveStarTime = lastFiveStar?.time,

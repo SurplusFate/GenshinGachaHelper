@@ -48,6 +48,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
+import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.sync.SyncState
 import com.genshin.gachahelper.ui.navigation.Screen
 import com.genshin.gachahelper.ui.theme.FiveStarColor
@@ -422,9 +423,16 @@ private fun PityGridCard(
         return
     }
 
+    val isNovice = poolStats.poolType == GachaType.NOVICE.value
+    // 新手池：pityCeiling=20 是「池总抽数」，不是五星保底阈值，进度语义为"已抽 X/20"
+    // 其他池：进度语义"已垫抽 X/保底上限"
     val pityPercent = (poolStats.currentPity.toFloat() / poolStats.pityCeiling).coerceIn(0f, 1f)
     val pityLeft = poolStats.pityCeiling - poolStats.currentPity
-    val progressColor = pityProgressColor(poolStats.currentPity)
+    val progressColor = if (isNovice) {
+        noviceProgressColor(poolStats.currentPity, poolStats.pityCeiling)
+    } else {
+        pityProgressColor(poolStats.currentPity)
+    }
 
     Surface(
         modifier = modifier,
@@ -472,10 +480,23 @@ private fun PityGridCard(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "距保底 ${pityLeft} 抽",
+                text = if (isNovice) {
+                    // 新手池只有 20 抽：抽满自动关闭，没有五星保底概念
+                    if (pityLeft <= 0) "新手池已关闭" else "池剩余 ${pityLeft} 抽（共 ${poolStats.pityCeiling} 抽）"
+                } else {
+                    "距保底 ${pityLeft} 抽"
+                },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (poolStats.currentPity >= 60) progressColor
-                else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (isNovice) {
+                    when {
+                        pityLeft <= 0 -> MaterialTheme.colorScheme.onSurfaceVariant
+                        poolStats.currentPity >= 15 -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                } else {
+                    if (poolStats.currentPity >= 60) progressColor
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
         }
     }
@@ -485,6 +506,20 @@ private fun PityGridCard(
 private fun pityProgressColor(currentPity: Int): Color = when {
     currentPity >= 75 -> MaterialTheme.colorScheme.error
     currentPity >= 60 -> Color(0xFFEFAA17)
+    else -> FiveStarColor
+}
+
+/**
+ * 新手池进度颜色：按已用 20 抽池总量的比例变色
+ * - ≤10 抽：刚开池，正常色
+ * - 11~15 抽：提醒色
+ * - ≥16 抽：接近用完（20 抽后自动关闭）
+ */
+@Composable
+private fun noviceProgressColor(currentPity: Int, ceiling: Int): Color = when {
+    ceiling <= 0 -> FiveStarColor
+    currentPity >= ceiling - 4 -> MaterialTheme.colorScheme.primary
+    currentPity >= ceiling - 10 -> Color(0xFFEFAA17)
     else -> FiveStarColor
 }
 
