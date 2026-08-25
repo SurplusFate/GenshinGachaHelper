@@ -118,6 +118,26 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-25 · v1.4.3 修复共享保底池统计一致性（tag `v1.4.3`）
+
+**版本信息**
+
+- `versionCode = 12`，`versionName = "1.4.3"`
+- 修复 v1.4.2 中共享保底池（角色池301+400）统计数据不一致的问题
+
+**Bug：共享保底池统计数据不一致（角色池2 显示 265抽1金）**
+
+- **根因**：`calculatePoolStats` 中，`currentPity` 和 `fiveStarIntervals` 已改为从合并记录计算（v1.4.2修复），但 `totalPulls`、`fiveStarCount`、`fourStarCount`、`threeStarCount`、`avgPullsPerFiveStar`、`lastFiveStar` 仍用单池记录，导致：
+  - 角色池2显示 535抽5金（单池），但平均出金 55.2抽（合并2651/48），数据自相矛盾
+  - 用户质疑"角色池265抽只有1金"——单池统计与共享保底机制不符
+- **修复**：统一用 `intervalRecords`（合并后的记录）计算**所有**统计指标（totalPulls、fiveStarCount、fourStarCount、threeStarCount、currentPity、lastFiveStar、fiveStarIntervals、avgPullsPerFiveStar、upFiveStarCount、upRate），确保共享保底池的所有统计一致
+- **附带修复**：
+  - `generateReport` 中 UP 率计算：改为取任意一个非空角色池的 `upRate`（两池已合并，叠加会重复计数）
+  - `HomeScreen` 的 `HeroLuckCard` 和 `LuckDetailCard`：汇总各池总和时只取一个角色池（两池统计已合并为同一份数据，叠加会导致总抽数翻倍）
+- **影响文件**：
+  - `GachaStatsCalculator.kt`：`calculatePoolStats` 方法 + `generateReport` 方法
+  - `HomeScreen.kt`：`HeroLuckCard` + `LuckDetailCard`
+
 ### 2026-08-25 · v1.4.2 修复首页最非/最欧数据错误（tag `v1.4.2`）
 
 **版本信息**

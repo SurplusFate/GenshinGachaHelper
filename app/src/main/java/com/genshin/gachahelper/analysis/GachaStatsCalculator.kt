@@ -51,35 +51,32 @@ class GachaStatsCalculator @Inject constructor() {
         val poolName = GachaType.fromValue(poolType).displayName
         val pityCeiling = getPityCeiling(poolType)
 
-        // 基础计数
-        val totalPulls = sortedRecords.size
-        val fiveStarRecords = sortedRecords.filter { it.rarity == 5 }
-        val fourStarCount = sortedRecords.count { it.rarity == 4 }
-        val threeStarCount = sortedRecords.count { it.rarity == 3 }
-
-        // 当前垫抽：角色池301和400共享保底
-        // 如果提供了 sharedPityRecords（另一个共享池的记录），则合并后计算垫抽
-        val currentPity = if (sharedPityRecords.isNotEmpty()) {
-            val mergedForPity = (records + sharedPityRecords)
-                .sortedByDescending { it.time }
-            calculateCurrentPity(mergedForPity)
-        } else {
-            calculateCurrentPity(sortedRecords)
-        }
-
-        // 最近一个五星
-        val lastFiveStar = fiveStarRecords.firstOrNull()
-
-        // 五星间隔计算：角色池301和400共享保底，间隔也必须合并计算
-        // 否则单池间隔会超过保底上限（如 147 抽），因为另一个池的五星不算"重置保底"
+        // 角色池301和400共享保底：所有统计指标必须统一使用合并记录
+        // 否则会出现 totalPulls=535 但 avgPulls=55（合并2651/48）的矛盾，用户会质疑数据不对
         val intervalRecords = if (sharedPityRecords.isNotEmpty()) {
-            records + sharedPityRecords
+            (records + sharedPityRecords).sortedByDescending { it.time }
         } else {
             sortedRecords
         }
+
+        // 基础计数：共享保底池用合并记录（与垫抽/间隔/平均出金保持一致）
+        val totalPulls = intervalRecords.size
+        val fiveStarRecords = intervalRecords.filter { it.rarity == 5 }
+        val fourStarCount = intervalRecords.count { it.rarity == 4 }
+        val threeStarCount = intervalRecords.count { it.rarity == 3 }
+
+        val currentPity = calculateCurrentPity(intervalRecords)
+
+        // 最近一个五星（共享保底池取合并后的最近五星）
+        val lastFiveStar = intervalRecords.firstOrNull { it.rarity == 5 }
+
+        // 五星间隔计算：角色池301和400共享保底，间隔也必须合并计算
+        // 否则单池间隔会超过保底上限（如 147 抽），因为另一个池的五星不算"重置保底"
         val intervals = calculateFiveStarIntervals(intervalRecords)
+
+        // 平均出金：共享保底池用合并记录计算（否则单池均值会超 90，误导用户）
         val avgPulls = if (fiveStarRecords.isNotEmpty()) {
-            totalPulls.toDouble() / fiveStarRecords.size
+            intervalRecords.size.toDouble() / fiveStarRecords.size
         } else {
             0.0
         }
@@ -88,7 +85,8 @@ class GachaStatsCalculator @Inject constructor() {
         val minPulls = if (intervals.isEmpty()) 0 else intervals.minOrNull() ?: 0
         val maxPulls = if (intervals.isEmpty()) 0 else intervals.maxOrNull() ?: 0
 
-        // UP 率计算：角色池及角色池-2中，非常驻五星 = UP 角色（赢了 50/50 或大保底）
+        // UP 率计算：角色池301和400共享保底且共享50/50，UP率也合并计算
+        // 非常驻五星 = UP 角色（赢了 50/50 或大保底）
         val upFiveStars = if (poolType == GachaType.CHARACTER.value || poolType == GachaType.CHARACTER_2.value) {
             fiveStarRecords.count { it.itemName !in STANDARD_FIVE_STAR_CHARACTERS }
         } else {
@@ -251,12 +249,9 @@ class GachaStatsCalculator @Inject constructor() {
         val bestLuck = allIntervals.minOrNull() ?: 0
         val worstLuck = allIntervals.maxOrNull() ?: 0
 
-        // UP 率：综合角色池和角色池-2
-        val totalUpFiveStars = (characterStats?.upFiveStarCount ?: 0) + (character2Stats?.upFiveStarCount ?: 0)
-        val totalCharFiveStars = (characterStats?.fiveStarCount ?: 0) + (character2Stats?.fiveStarCount ?: 0)
-        val upRate = if (totalCharFiveStars > 0) {
-            totalUpFiveStars.toDouble() / totalCharFiveStars
-        } else 0.0
+        // UP 率：角色池301和400共享保底且共享50/50，两个池的 upRate 已经是合并计算的结果
+        // 直接取任意一个非空池的 upRate 即可，避免双池叠加导致重复计数
+        val upRate = characterStats?.upRate ?: character2Stats?.upRate ?: 0.0
 
         return GachaReport(
             totalPulls = totalPulls,
