@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.stickyHeader
+// stickyHeader 在当前 Compose 版本不可用，使用 item 替代实现日期分组
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -115,7 +115,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
                     when (listItem) {
                         is HistoryListItem.Header -> {
                             val dayStat = dailyStats[listItem.date]
-                            stickyHeader(key = "header_${listItem.date}") {
+                            item(key = "header_${listItem.date}") {
                                 DateHeader(date = listItem.date, dayStat = dayStat)
                             }
                         }
