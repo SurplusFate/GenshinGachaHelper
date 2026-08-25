@@ -118,6 +118,25 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-25 · v1.3.2 修复五星间隔排序错误和垫抽计算逻辑（commit `0e41b0b`，tag `v1.3.2`）
+
+**版本信息**
+
+- `versionCode = 8`，`versionName = "1.3.2"`
+- 对 v1.3.1 重构引入的三个页面进行代码审查后修复 5 个问题
+
+**修复内容**
+
+1. **五星间隔排序错误**（严重）：`HistoryViewModel`、`StatsViewModel`、`GachaStatsCalculator` 中五星间隔计算使用 `orderNumber` 排序，但 `orderNumber`（API 的 `id` 字段）是每个池内独立的序列，跨池排序不正确。改为按 `time` 字段排序，确保时间顺序正确。
+
+2. **垫抽计算语义错误**（严重）：`HistoryViewModel.refreshStats()` 把所有池的记录合并后调用 `calculateCurrentPity(allRecords)`，跨池合并算出的"总垫抽"无实际意义。改为取各池中垫抽的最大值——用户最关心的是最接近保底的池。
+
+3. **五星间隔算法不一致**（重要）：三个页面用三种不同算法算同一个"五星间隔"概念——HomeViewModel 每池单独算、StatsViewModel 角色池 301+400 合并算、HistoryViewModel 全部合并算。统一为：角色池 301+400 合并算（与 `GachaStatsCalculator.generateReport` 一致），其他池单独算。
+
+4. **StatsScreen 非空断言**（次要）：`uiState.report!!` 改为 `uiState.report?.let { ... }` 安全调用，避免潜在的 NPE。
+
+5. **stickyHeader 兼容性**（commit `c146e63`）：`stickyHeader` 改为 `item`，兼容当前 Compose 版本。
+
 ### 2026-08-25 · v1.3.1 重构首页/历史/统计三个页面
 
 **改动**：对首页、历史记录、统计三个核心页面进行重构优化，提升代码可维护性和用户体验。
