@@ -71,16 +71,23 @@ class GachaStatsCalculator @Inject constructor() {
         // 最近一个五星
         val lastFiveStar = fiveStarRecords.firstOrNull()
 
-        // 五星间隔计算
-        val intervals = calculateFiveStarIntervals(sortedRecords)
+        // 五星间隔计算：角色池301和400共享保底，间隔也必须合并计算
+        // 否则单池间隔会超过保底上限（如 147 抽），因为另一个池的五星不算"重置保底"
+        val intervalRecords = if (sharedPityRecords.isNotEmpty()) {
+            records + sharedPityRecords
+        } else {
+            sortedRecords
+        }
+        val intervals = calculateFiveStarIntervals(intervalRecords)
         val avgPulls = if (fiveStarRecords.isNotEmpty()) {
             totalPulls.toDouble() / fiveStarRecords.size
         } else {
             0.0
         }
 
-        val minPulls = intervals.minOrNull() ?: 0
-        val maxPulls = intervals.maxOrNull() ?: 0
+        // 没有五星的池：min/max 设为 0，UI 层应过滤掉 fiveStarCount == 0 的池
+        val minPulls = if (intervals.isEmpty()) 0 else intervals.minOrNull() ?: 0
+        val maxPulls = if (intervals.isEmpty()) 0 else intervals.maxOrNull() ?: 0
 
         // UP 率计算：角色池及角色池-2中，非常驻五星 = UP 角色（赢了 50/50 或大保底）
         val upFiveStars = if (poolType == GachaType.CHARACTER.value || poolType == GachaType.CHARACTER_2.value) {

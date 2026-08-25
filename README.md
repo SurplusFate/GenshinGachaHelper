@@ -118,6 +118,23 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-25 · v1.4.2 修复首页最非/最欧数据错误（tag `v1.4.2`）
+
+**版本信息**
+
+- `versionCode = 11`，`versionName = "1.4.2"`
+- 修复 v1.4.1 中首页"运气拆解"卡片最非/最欧显示异常值的问题
+
+**Bug：首页"最非147抽 最欧0抽"异常值**
+
+- **根因 1（最非147抽，超过保底上限90）**：`GachaStatsCalculator.calculatePoolStats` 计算五星间隔时只用单池记录，未合并共享保底的 301+400 池。角色池 301 单独算间隔时，400 池里的五星不算"重置保底"，导致间隔可超过 90
+  - **修复**：当 `sharedPityRecords` 非空时，间隔计算也用合并后的 301+400 记录
+- **根因 2（最欧0抽，不可能值）**：没有五星记录的池，`intervals.minOrNull() ?: 0` 返回 0；`LuckDetailCard` 的 `minOfOrNull` 跨池取最小值时取到了这个 0
+  - **修复**：`LuckDetailCard` 过滤掉 `fiveStarCount == 0` 的池再取最非/最欧；所有值为 0 时显示 "—" 而非 "0 抽"
+- **影响文件**：
+  - `GachaStatsCalculator.kt`：`calculatePoolStats` 的间隔计算部分
+  - `HomeScreen.kt`：`LuckDetailCard` 的最非/最欧计算和显示
+
 ### 2026-08-25 · v1.4.1 修复排序与筛选数据错误（tag `v1.4.1`）
 
 **版本信息**

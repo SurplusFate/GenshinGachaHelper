@@ -590,11 +590,13 @@ private fun LuckDetailCard(uiState: HomeUiState) {
         uiState.noviceStats,
         uiState.chronicledStats
     )
+    // 只取有五星记录的池来算最非/最欧，避免空池的 0 值污染结果
+    val statsWithFiveStars = stats.filter { it.fiveStarCount > 0 }
     val totalPulls = stats.sumOf { it.totalPulls }
     val totalFiveStars = stats.sumOf { it.fiveStarCount }
     val avgPulls = if (totalFiveStars > 0) totalPulls.toDouble() / totalFiveStars else 0.0
-    val worstLuck = stats.maxOfOrNull { it.maxPullsForFiveStar } ?: 0
-    val bestLuck = stats.minOfOrNull { it.minPullsForFiveStar } ?: 0
+    val worstLuck = statsWithFiveStars.maxOfOrNull { it.maxPullsForFiveStar } ?: 0
+    val bestLuck = statsWithFiveStars.minOfOrNull { it.minPullsForFiveStar } ?: 0
     val recentInterval = uiState.recentFiveStarIntervals.firstOrNull() ?: 0
 
     val upFiveStars = (uiState.characterStats?.upFiveStarCount ?: 0) +
@@ -609,10 +611,10 @@ private fun LuckDetailCard(uiState: HomeUiState) {
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            LuckDetailRow("平均出金", String.format("%.1f 抽", avgPulls), MaterialTheme.colorScheme.primary)
-            LuckDetailRow("最近五星", "$recentInterval 抽", Color(0xFF1DC981))
-            LuckDetailRow("最非", "$worstLuck 抽", MaterialTheme.colorScheme.error)
-            LuckDetailRow("最欧", "$bestLuck 抽", FiveStarColor)
+            LuckDetailRow("平均出金", if (totalFiveStars > 0) String.format("%.1f 抽", avgPulls) else "—", MaterialTheme.colorScheme.primary)
+            LuckDetailRow("最近五星", if (recentInterval > 0) "$recentInterval 抽" else "—", Color(0xFF1DC981))
+            LuckDetailRow("最非", if (worstLuck > 0) "$worstLuck 抽" else "—", MaterialTheme.colorScheme.error)
+            LuckDetailRow("最欧", if (bestLuck > 0) "$bestLuck 抽" else "—", FiveStarColor)
             LuckDetailRow("UP成功率", String.format("%.0f%%", upRate), MaterialTheme.colorScheme.primary)
             LuckDetailRow("总抽数", "$totalPulls", MaterialTheme.colorScheme.onSurface)
         }
