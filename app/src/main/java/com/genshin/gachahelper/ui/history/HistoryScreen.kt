@@ -95,7 +95,14 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
         if (isEmpty) {
             EmptyState(modifier = Modifier.weight(1f))
         } else {
-            val listItems = remember(records.itemCount) {
+            // 把已加载的分页数据按日期拍平，在日期切换处插入分组头
+            // key 必须同时包含 filter 三元组：同一 itemCount 下 filter 不同也必须重建（N5 修复）
+            val listItems = remember(
+                records.itemCount,
+                filter.poolType,
+                filter.rarity,
+                filter.searchQuery
+            ) {
                 buildList<HistoryListItem> {
                     var lastDate: String? = null
                     for (i in 0 until records.itemCount) {
