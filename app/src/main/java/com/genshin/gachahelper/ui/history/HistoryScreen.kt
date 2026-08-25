@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -31,6 +32,9 @@ import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.ui.theme.FiveStarColor
 import com.genshin.gachahelper.ui.theme.FourStarColor
 import com.genshin.gachahelper.ui.theme.ThreeStarColor
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
@@ -45,16 +49,28 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
             onRarityChange = { viewModel.setRarityFilter(it) }
         )
 
-        // 列表
+        // 列表：按日期分组，日期变化时插入分组 Header
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxSize()
         ) {
             items(records.itemCount) { index ->
                 records[index]?.let { record ->
-                    RecordItem(
-                        record = record,
-                        poolTypeName = viewModel.getPoolTypeName(record.poolType)
-                    )
+                    val dateKey = remember(record.time) { record.time.take(10) }
+                    val prevDateKey = remember(index) {
+                        if (index == 0) null
+                        else records[index - 1]?.time?.take(10)
+                    }
+                    val showHeader = prevDateKey != dateKey
+
+                    Column {
+                        if (showHeader) {
+                            DateGroupHeader(dateKey = dateKey)
+                        }
+                        RecordItem(
+                            record = record,
+                            poolTypeName = viewModel.getPoolTypeName(record.poolType)
+                        )
+                    }
                 }
             }
         }
@@ -123,6 +139,39 @@ fun FilterChips(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun DateGroupHeader(dateKey: String) {
+    val today = remember { LocalDate.now() }
+    val yesterday = remember { today.minusDays(1) }
+    val label = remember(dateKey, today, yesterday) {
+        runCatching {
+            val date = LocalDate.parse(dateKey)
+            when (date) {
+                today -> "今天"
+                yesterday -> "昨天"
+                else -> {
+                    val pattern = if (date.year == today.year) "MM-dd EEE" else "yyyy-MM-dd"
+                    date.format(DateTimeFormatter.ofPattern(pattern, Locale.getDefault()))
+                }
+            }
+        }.getOrElse { dateKey }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 

@@ -118,6 +118,32 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-25 · v1.3.0 正式版：历史记录按日期分组展示 + keystore 入仓统一签名（commit 待提交，tag `v1.3.0`）
+
+**版本信息**
+
+- `versionCode = 6`，`versionName = "1.3.0"`
+- `release.keystore` 纳入版本控制（`git add -f`，不受 `.gitignore` 的 `*.keystore` 规则影响），任何机器 clone 后 `./gradlew assembleRelease` 即可用同一证书签名
+- `app/build.gradle.kts` 的 `storeFile` 从绝对路径改为相对路径 `file("$rootDir/release.keystore")`
+- 证书指纹（本次起新证书，后续版本复用）：
+  - SHA-1: `0F:86:65:32:AC:6D:87:86:0B:0E:DE:F3:35:43:37:70:11:14:5C:71`
+  - SHA-256: `FE:1A:1D:95:B1:C3:9B:77:3D:A2:A4:8C:41:6A:3B:90:61:DF:97:B4:1E:3F:F3:3E:D5:F5:9E:46:69:09:4F:DB`
+
+**历史记录页改为按日期分组列表**
+
+原先历史记录页是扁平列表（一条 Card 一条记录），长列表翻几屏后不知道在哪个日期。
+改为按日期分组：LazyColumn 渲染时，当前记录的日期（`time.take(10)`，即 `yyyy-MM-dd`）与前一条不同时，在该条上方插入一个分组 Header。
+
+Header 用 `java.time.LocalDate` 做人性化显示：
+- 今天 → `今天`
+- 昨天 → `昨天`
+- 今年其他日期 → `MM-dd EEE`（如 `08-24 周一`）
+- 跨年 → `yyyy-MM-dd`
+- 解析失败兜底原字符串
+
+纯 UI 层改动，**数据层 / Paging / ViewModel 全部不动**（保持性能与现有刷新逻辑）。
+Paging 是流式加载（每页 20 条），header 渲染时当天可能只加载了部分，所以 header 只显示日期不显示当天抽数（避免跳变误导）。
+
 ### 2026-08-24 · v1.2.1 验证码登录修复
 
 **问题**：验证码登录后提示「检测到账号但没有可用于换取凭证的 login_ticket」，无法完成登录。

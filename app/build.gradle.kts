@@ -12,7 +12,7 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("/data/user/work/release.keystore")
+            storeFile = file("$rootDir/release.keystore")
             storePassword = "123456"
             keyAlias = "gacha-release"
             keyPassword = "123456"
@@ -23,8 +23,8 @@ android {
         applicationId = "com.genshin.gachahelper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.2.1"
+        versionCode = 6
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
