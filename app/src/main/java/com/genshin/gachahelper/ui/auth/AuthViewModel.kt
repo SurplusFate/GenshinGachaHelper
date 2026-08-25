@@ -473,13 +473,49 @@ class AuthViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            // 保存凭证（可能没有 stoken，但有 cookie_token 和 ltoken）
-            authRepository.saveWebViewCredentials(
-                ltuid = ltuid,
-                mid = mid,
-                cookieToken = cookieToken,
-                ltoken = ltoken
-            )
+            // 先用 cookie_token 换 stoken（genAuthKey 需要 stoken 才能通过，
+            // 否则后续同步会报 -100 登录状态失效）。失败不直接终止，
+            // 只作为 debugInfo 提示，后续看 genAuthKey 是否成功。
+            var swappedStoken: String? = null
+            if (!cookieToken.isNullOrBlank()) {
+                setState { copy(statusText = "正在换取 stoken...") }
+                when (val r = mihoyoApi.getStokenByCookieToken(cookieToken, ltuid, mid)) {
+                    is ApiResult.Success -> {
+                        swappedStoken = r.data
+                        setState {
+                            copy(debugInfo = (uiState.value.debugInfo
+                                ?: "") + "\nstoken 兑换成功（使用 cookie_token_v2）")
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        setState {
+                            copy(debugInfo = (uiState.value.debugInfo
+                                ?: "") + "\nstoken 兑换失败：${r.message}" +
+                                "\n提示：若后续 generateAuthKey 报 -100，请改用扫码登录")
+                        }
+                    }
+                }
+            }
+
+            // 保存凭证：优先使用已兑换到的 stoken（没有则保持 null）。
+            // saveWebViewCredentials 在 stoken 为 null 时不会覆盖已存的值，
+            // 所以这里用 saveLoginCredentials 显式写入（含 stoken → 和扫码登录产出同构）。
+            if (swappedStoken != null) {
+                authRepository.saveLoginCredentials(
+                    stoken = swappedStoken,
+                    ltuid = ltuid,
+                    mid = mid,
+                    cookieToken = cookieToken,
+                    ltoken = ltoken
+                )
+            } else {
+                authRepository.saveWebViewCredentials(
+                    ltuid = ltuid,
+                    mid = mid,
+                    cookieToken = cookieToken,
+                    ltoken = ltoken
+                )
+            }
 
             // 直接尝试获取游戏角色来验证凭证是否有效
             // getGameRoles 内部会调用 buildCookieString() 组装 cookie
