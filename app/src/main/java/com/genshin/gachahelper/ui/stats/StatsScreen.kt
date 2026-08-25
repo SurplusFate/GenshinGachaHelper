@@ -112,10 +112,7 @@ fun StatsScreen(
                     }
 
                     when (selectedTab) {
-                        0 -> OverviewTab(
-                            report = uiState.report!!,
-                            navController = navController
-                        )
+                        0 -> uiState.report?.let { OverviewTab(report = it, navController = navController) }
                         1 -> TimelineTab(timeline = uiState.fiveStarTimeline)
                         2 -> CollectionTab(items = uiState.itemCollection)
                         3 -> CalendarTab(dailyStats = uiState.dailyStats)

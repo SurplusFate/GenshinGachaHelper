@@ -180,7 +180,7 @@ class StatsViewModel @Inject constructor(
         poolName: String
     ) {
         if (records.isEmpty()) return
-        val sorted = records.sortedBy { it.orderNumber.toLongOrNull() ?: 0L }
+        val sorted = records.sortedBy { it.time }
         var lastIndex = -1
         for ((index, record) in sorted.withIndex()) {
             if (record.rarity == 5) {

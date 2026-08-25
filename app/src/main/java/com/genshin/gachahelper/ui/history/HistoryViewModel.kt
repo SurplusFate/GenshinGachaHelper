@@ -168,6 +168,28 @@ class HistoryViewModel @Inject constructor(
         refreshStats()
     }
 
+    /**
+     * 计算一组记录中的五星出金间隔，结果写入 [intervals] Map。
+     * 按 time 正序排列，每遇到五星计算距上一条五星的位置差。
+     * 与 GachaStatsCalculator.calculateFiveStarIntervals 逻辑一致，但用 time 排序。
+     */
+    private fun computeFiveStarIntervals(
+        records: List<GachaRecordEntity>,
+        intervals: MutableMap<String, Int>
+    ) {
+        if (records.isEmpty()) return
+        val sorted = records.sortedBy { it.time }
+        var lastFiveStarIndex = -1
+        for ((index, record) in sorted.withIndex()) {
+            if (record.rarity == 5) {
+                val interval = if (lastFiveStarIndex == -1) index + 1
+                else index - lastFiveStarIndex
+                intervals[record.orderNumber] = interval
+                lastFiveStarIndex = index
+            }
+        }
+    }
+
     fun setPoolFilter(poolType: Int?) {
         _filter.value = _filter.value.copy(poolType = poolType)
     }
@@ -205,36 +227,41 @@ class HistoryViewModel @Inject constructor(
 
             val accountId = account.id
 
-            // 合并各池全部记录
-            val allRecords = GachaType.entries
-                .flatMap { gachaRepository.getRecordsByPool(accountId, it.value) }
+            // 各池记录
+            val characterRecords = gachaRepository.getRecordsByPool(accountId, GachaType.CHARACTER.value)
+            val character2Records = gachaRepository.getRecordsByPool(accountId, GachaType.CHARACTER_2.value)
+            val weaponRecords = gachaRepository.getRecordsByPool(accountId, GachaType.WEAPON.value)
+            val standardRecords = gachaRepository.getRecordsByPool(accountId, GachaType.STANDARD.value)
+            val noviceRecords = gachaRepository.getRecordsByPool(accountId, GachaType.NOVICE.value)
+            val chronicledRecords = gachaRepository.getRecordsByPool(accountId, GachaType.CHRONICLED.value)
 
-            // 按 orderNumber 正序排列（最老在前）
-            val sortedAsc = allRecords
-                .sortedBy { it.orderNumber.toLongOrNull() ?: 0L }
+            val allRecords = characterRecords + character2Records + weaponRecords +
+                standardRecords + noviceRecords + chronicledRecords
 
-            // 五星间隔：遍历记录，每遇到五星就计算距上一个五星的位置差
+            // 五星间隔：与 GachaStatsCalculator 保持一致
+            // 角色池 301+400 共享保底，合并后按 time 正序计算间隔；其他池单独算
             val intervals = mutableMapOf<String, Int>()
-            var lastFiveStarIndex = -1
-            for ((index, record) in sortedAsc.withIndex()) {
-                if (record.rarity == 5) {
-                    val interval = if (lastFiveStarIndex == -1) {
-                        index + 1 // 第一条五星：从 0 开始算
-                    } else {
-                        index - lastFiveStarIndex
-                    }
-                    intervals[record.orderNumber] = interval
-                    lastFiveStarIndex = index
-                }
-            }
+            computeFiveStarIntervals(characterRecords + character2Records, intervals)
+            computeFiveStarIntervals(weaponRecords, intervals)
+            computeFiveStarIntervals(standardRecords, intervals)
+            computeFiveStarIntervals(noviceRecords, intervals)
+            computeFiveStarIntervals(chronicledRecords, intervals)
             _fiveStarIntervals.value = intervals
 
-            // 统计摘要
+            // 统计摘要：垫抽取各池中的最大值（用户最关心的是最接近保底的池）
+            val pityValues = listOf(
+                statsCalculator.calculateCurrentPity(characterRecords + character2Records),
+                statsCalculator.calculateCurrentPity(weaponRecords),
+                statsCalculator.calculateCurrentPity(standardRecords),
+                statsCalculator.calculateCurrentPity(noviceRecords),
+                statsCalculator.calculateCurrentPity(chronicledRecords)
+            ).filter { it > 0 }
+
             _summary.value = HistorySummary(
                 totalPulls = allRecords.size,
                 fiveStarCount = allRecords.count { it.rarity == 5 },
                 fourStarCount = allRecords.count { it.rarity == 4 },
-                currentPity = statsCalculator.calculateCurrentPity(allRecords)
+                currentPity = pityValues.maxOrNull() ?: 0
             )
 
             // 每日统计（按 date 分组）

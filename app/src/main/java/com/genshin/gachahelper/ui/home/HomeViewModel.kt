@@ -192,8 +192,8 @@ class HomeViewModel @Inject constructor(
     /**
      * 加载最近五星记录（最多 10 条），并计算每条五星的出金间隔。
      *
-     * 间隔计算方式：对每个池使用 [GachaStatsCalculator.calculateFiveStarIntervals] 处理
-     * 对应池的全部记录，得到按时间正序排列的间隔列表，再按五星记录 id 映射回每条记录。
+     * 间隔计算与 GachaStatsCalculator 保持一致：
+     * 角色池 301+400 共享保底，合并后按 time 正序计算间隔；其他池单独算。
      */
     private suspend fun loadRecentFiveStars(
         accountId: Long,
@@ -205,19 +205,41 @@ class HomeViewModel @Inject constructor(
 
         // 五星记录 id -> 出金间隔（距上一个五星多少抽）
         val intervalById = mutableMapOf<Long, Int>()
-        for ((_, records) in poolRecords) {
-            if (records.isEmpty()) continue
-            val sortedAsc = records.sortedBy { it.orderNumber.toLongOrNull() ?: 0L }
-            val fiveStarsAsc = sortedAsc.filter { it.rarity == 5 }
-            val intervals = statsCalculator.calculateFiveStarIntervals(sortedAsc)
-            // intervals 按时间正序排列，第 i 个间隔对应第 i 个五星
-            for ((index, fiveStar) in fiveStarsAsc.withIndex()) {
-                intervalById[fiveStar.id] = intervals.getOrNull(index) ?: 0
-            }
+
+        // 角色池 301+400 合并计算
+        val charRecords = (poolRecords[GachaType.CHARACTER.value].orEmpty() +
+            poolRecords[GachaType.CHARACTER_2.value].orEmpty())
+        computeIntervals(charRecords, intervalById)
+
+        // 其他池单独计算
+        for ((type, records) in poolRecords) {
+            if (type == GachaType.CHARACTER.value || type == GachaType.CHARACTER_2.value) continue
+            computeIntervals(records, intervalById)
         }
 
         return recent.map { fiveStar ->
             fiveStar to (intervalById[fiveStar.id] ?: 0)
+        }
+    }
+
+    /**
+     * 计算一组记录中的五星出金间隔，结果写入 [result] Map。
+     * 按 time 正序排列，每遇到五星计算距上一条五星的位置差。
+     */
+    private fun computeIntervals(
+        records: List<GachaRecordEntity>,
+        result: MutableMap<Long, Int>
+    ) {
+        if (records.isEmpty()) return
+        val sorted = records.sortedBy { it.time }
+        var lastFiveStarIndex = -1
+        for ((index, record) in sorted.withIndex()) {
+            if (record.rarity == 5) {
+                val interval = if (lastFiveStarIndex == -1) index + 1
+                else index - lastFiveStarIndex
+                result[record.id] = interval
+                lastFiveStarIndex = index
+            }
         }
     }
 
