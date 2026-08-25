@@ -118,6 +118,64 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-25 · v1.5.0 抽卡统计计算引擎全面重构（tag `v1.5.0`）
+
+**版本信息**
+
+- `versionCode = 14`，`versionName = "1.5.0"`
+- 对抽卡统计计算逻辑进行系统性重构，明确"独立统计"与"共享保底"的边界
+- 新增完整单元测试覆盖所有计算场景
+
+**背景**
+
+v1.4.x 版本在实际使用中发现多处统计口径和计算公式错误，包括：总抽数错误、五星数量错误、当前垫抽错误、平均出金错误、最欧/最非可能错误、UP率定义不准确、角色活动池 301/400 共享保底处理错误等。问题根源在于排序基准（time vs orderNumber）选择错误、平均出金公式未排除当前垫抽、301/400 统计口径不清晰、各 ViewModel 重复实现计算逻辑导致口径不一致。
+
+**核心修复**
+
+1. **排序基准修正（time → orderNumber）**
+   - 原问题：用 `time` 字符串排序，同一秒多抽会错乱，导致五星间隔超过 90 抽的虚假结果
+   - 修复：全部改为按 `orderNumber`（API 返回的 `id` 字段）升序/降序排列
+   - 影响：`GachaStatsCalculator` 内部排序、`GachaRecordDao` 全部查询的 `ORDER BY`、三个 ViewModel 的间隔计算
+
+2. **平均出金公式修正**
+   - 原问题：`总抽数 ÷ 五星数量`，把尚未出金的当前垫抽也算进了平均，导致平均出金虚高
+   - 修复：`已完成五星间隔之和 ÷ 间隔数量`，当前垫抽不计入平均
+   - 最欧/最非同样只取已完成的间隔，当前垫抽不参与
+
+3. **301/400 统计口径明确分离**
+   - 按职责拆分为四个独立统计模块：
+     - `PoolBasicStats`（独立）：总抽数、五星/四星/三星数量
+     - `PityStats`（共享）：当前垫抽、保底上限、距离保底、是否大保底
+     - `FiveStarStats`（共享）：五星间隔列表、平均出金、最欧、最非
+     - `UpStats`（独立计数）：UP五星数、歪五星数、UP率
+   - 301 和 400 在保底/间隔计算中合并（共享保底），但基础统计各自独立
+   - 角色池与武器池/常驻池/新手池/集录池完全独立
+
+4. **移除 coerceIn 掩盖错误**
+   - 删除所有 `coerceIn(0, pityCeiling - 1)` 之类的兜底处理
+   - 数据异常时直接暴露，便于定位问题而非静默修正
+
+5. **计算逻辑统一入口**
+   - 所有 ViewModel（Home/Stats/History）的五星间隔计算全部委托给 `GachaStatsCalculator.calculateFiveStarIntervals()`
+   - 消除了三个页面三种不同算法的不一致问题
+   - UI 层不再包含任何统计计算逻辑
+
+6. **新增单元测试**
+   - 新增 `GachaStatsCalculatorTest`，22 个测试用例全部通过
+   - 覆盖：空数据、第一次五星、连续五星、当前垫抽、平均出金（不含垫抽）、最欧最非、301/400 独立总抽数、301/400 共享垫抽、301/400 共享五星间隔、50/50 状态、UP 率、各池独立性、全局汇总、乱序输入、同一秒多抽
+
+**影响文件**
+
+- `analysis/GachaStats.kt`：重写，按职责拆分为 4 个数据模型
+- `analysis/GachaStatsCalculator.kt`：重写，所有计算公式 + orderNumber 排序
+- `data/local/dao/GachaRecordDao.kt`：所有查询 ORDER BY 改为 orderNumber
+- `ui/home/HomeViewModel.kt`：移除重复计算，委托给计算器
+- `ui/stats/StatsViewModel.kt`：移除重复计算，时间轴按 orderNumber 排序
+- `ui/history/HistoryViewModel.kt`：移除重复计算，委托给计算器
+- `ui/history/HistoryScreen.kt`：补充 Paging 扩展函数 import
+- `app/build.gradle.kts`：新增测试依赖
+- `test/.../GachaStatsCalculatorTest.kt`：新增 22 个单元测试
+
 ### 2026-08-25 · v1.4.4 修复v1.4.3引入的多个回归问题（tag `v1.4.4`）
 
 **版本信息**

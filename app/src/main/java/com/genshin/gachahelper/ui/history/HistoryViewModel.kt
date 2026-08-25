@@ -193,27 +193,23 @@ class HistoryViewModel @Inject constructor(
 
     /**
      * 计算一组记录中的五星出金间隔，结果写入 [intervals] Map。
-     * 按 time 正序排列，每遇到五星计算距上一条五星的位置差。
-     * 与 GachaStatsCalculator.calculateFiveStarIntervals 逻辑一致。
-     * @param pityCeiling 保底上限，超过此值的间隔不写入（数据不完整导致的不可能值）
+     * 使用 GachaStatsCalculator 计算间隔列表，保证计算口径统一。
      */
     private fun computeFiveStarIntervals(
         records: List<GachaRecordEntity>,
-        intervals: MutableMap<String, Int>,
-        pityCeiling: Int = 0
+        intervals: MutableMap<String, Int>
     ) {
         if (records.isEmpty()) return
-        val sorted = records.sortedBy { it.time }
-        var lastFiveStarIndex = -1
-        for ((index, record) in sorted.withIndex()) {
-            if (record.rarity == 5) {
-                val interval = if (lastFiveStarIndex == -1) index + 1
-                else index - lastFiveStarIndex
-                // 过滤超过保底上限的不可能值（数据不完整时缺少五星会导致间隔 > 90）
-                if (pityCeiling <= 0 || interval <= pityCeiling) {
-                    intervals[record.orderNumber] = interval
-                }
-                lastFiveStarIndex = index
+        // 用计算器获取按 orderNumber 排序后的间隔列表
+        val intervalList = statsCalculator.calculateFiveStarIntervals(records)
+        // 获取按 orderNumber 升序排列的五星记录
+        val fiveStars = records
+            .filter { it.rarity == 5 }
+            .sortedBy { it.orderNumber }
+        // 一一对应
+        for (i in fiveStars.indices) {
+            if (i < intervalList.size) {
+                intervals[fiveStars[i].orderNumber] = intervalList[i]
             }
         }
     }
@@ -300,30 +296,29 @@ class HistoryViewModel @Inject constructor(
 
         // 4. 五星出金间隔：使用未过滤的原始记录（保留完整池历史），
         //    按 poolType 限定参与计算的池，按保底共享池维度各自计算
-        //    传入各池保底上限，过滤数据不完整导致的不可能间隔（> 90/80）
         val intervals = mutableMapOf<String, Int>()
         when (filter.poolType) {
             null -> {
-                computeFiveStarIntervals(characterRecords + character2Records, intervals, statsCalculator.getPityCeiling(GachaType.CHARACTER.value))
-                computeFiveStarIntervals(weaponRecords, intervals, statsCalculator.getPityCeiling(GachaType.WEAPON.value))
-                computeFiveStarIntervals(standardRecords, intervals, statsCalculator.getPityCeiling(GachaType.STANDARD.value))
-                computeFiveStarIntervals(noviceRecords, intervals, statsCalculator.getPityCeiling(GachaType.NOVICE.value))
-                computeFiveStarIntervals(chronicledRecords, intervals, statsCalculator.getPityCeiling(GachaType.CHRONICLED.value))
+                computeFiveStarIntervals(characterRecords + character2Records, intervals)
+                computeFiveStarIntervals(weaponRecords, intervals)
+                computeFiveStarIntervals(standardRecords, intervals)
+                computeFiveStarIntervals(noviceRecords, intervals)
+                computeFiveStarIntervals(chronicledRecords, intervals)
             }
             GachaType.CHARACTER.value, GachaType.CHARACTER_2.value -> {
-                computeFiveStarIntervals(characterRecords + character2Records, intervals, statsCalculator.getPityCeiling(GachaType.CHARACTER.value))
+                computeFiveStarIntervals(characterRecords + character2Records, intervals)
             }
             GachaType.WEAPON.value -> {
-                computeFiveStarIntervals(weaponRecords, intervals, statsCalculator.getPityCeiling(GachaType.WEAPON.value))
+                computeFiveStarIntervals(weaponRecords, intervals)
             }
             GachaType.STANDARD.value -> {
-                computeFiveStarIntervals(standardRecords, intervals, statsCalculator.getPityCeiling(GachaType.STANDARD.value))
+                computeFiveStarIntervals(standardRecords, intervals)
             }
             GachaType.NOVICE.value -> {
-                computeFiveStarIntervals(noviceRecords, intervals, statsCalculator.getPityCeiling(GachaType.NOVICE.value))
+                computeFiveStarIntervals(noviceRecords, intervals)
             }
             GachaType.CHRONICLED.value -> {
-                computeFiveStarIntervals(chronicledRecords, intervals, statsCalculator.getPityCeiling(GachaType.CHRONICLED.value))
+                computeFiveStarIntervals(chronicledRecords, intervals)
             }
             else -> {}
         }

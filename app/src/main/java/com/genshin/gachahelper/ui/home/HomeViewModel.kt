@@ -192,8 +192,8 @@ class HomeViewModel @Inject constructor(
     /**
      * 加载最近五星记录（最多 10 条），并计算每条五星的出金间隔。
      *
-     * 间隔计算与 GachaStatsCalculator 保持一致：
-     * 角色池 301+400 共享保底，合并后按 time 正序计算间隔；其他池单独算。
+     * 间隔计算委托给 GachaStatsCalculator：
+     * 角色池 301+400 共享保底，合并后按 orderNumber 计算间隔；其他池单独算。
      */
     private suspend fun loadRecentFiveStars(
         accountId: Long,
@@ -206,15 +206,15 @@ class HomeViewModel @Inject constructor(
         // 五星记录 id -> 出金间隔（距上一个五星多少抽）
         val intervalById = mutableMapOf<Long, Int>()
 
-        // 角色池 301+400 合并计算
+        // 角色池 301+400 合并计算（共享保底）
         val charRecords = (poolRecords[GachaType.CHARACTER.value].orEmpty() +
             poolRecords[GachaType.CHARACTER_2.value].orEmpty())
-        computeIntervals(charRecords, intervalById, statsCalculator.getPityCeiling(GachaType.CHARACTER.value))
+        computeIntervalsForPool(charRecords, intervalById)
 
         // 其他池单独计算
         for ((type, records) in poolRecords) {
             if (type == GachaType.CHARACTER.value || type == GachaType.CHARACTER_2.value) continue
-            computeIntervals(records, intervalById, statsCalculator.getPityCeiling(type))
+            computeIntervalsForPool(records, intervalById)
         }
 
         return recent.map { fiveStar ->
@@ -223,28 +223,24 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * 计算一组记录中的五星出金间隔，结果写入 [result] Map。
-     * 按 time 正序排列，每遇到五星计算距上一条五星的位置差。
-     * 与 GachaStatsCalculator.calculateFiveStarIntervals 逻辑一致。
-     * @param pityCeiling 保底上限，超过此值的间隔不写入（数据不完整导致的不可能值）
+     * 计算一组记录中每条五星的出金间隔，结果写入 [result] Map。
+     * 使用 GachaStatsCalculator 计算间隔列表，再与五星记录一一对应。
      */
-    private fun computeIntervals(
+    private fun computeIntervalsForPool(
         records: List<GachaRecordEntity>,
-        result: MutableMap<Long, Int>,
-        pityCeiling: Int = 0
+        result: MutableMap<Long, Int>
     ) {
         if (records.isEmpty()) return
-        val sorted = records.sortedBy { it.time }
-        var lastFiveStarIndex = -1
-        for ((index, record) in sorted.withIndex()) {
-            if (record.rarity == 5) {
-                val interval = if (lastFiveStarIndex == -1) index + 1
-                else index - lastFiveStarIndex
-                // 过滤超过保底上限的不可能值
-                if (pityCeiling <= 0 || interval <= pityCeiling) {
-                    result[record.id] = interval
-                }
-                lastFiveStarIndex = index
+        // 用计算器获取按 orderNumber 排序后的间隔列表
+        val intervals = statsCalculator.calculateFiveStarIntervals(records)
+        // 获取按 orderNumber 升序排列的五星记录
+        val fiveStarsInOrder = records
+            .filter { it.rarity == 5 }
+            .sortedBy { it.orderNumber }
+        // 一一对应
+        for (i in fiveStarsInOrder.indices) {
+            if (i < intervals.size) {
+                result[fiveStarsInOrder[i].id] = intervals[i]
             }
         }
     }

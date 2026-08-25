@@ -24,16 +24,18 @@ import javax.inject.Inject
 /**
  * 时间轴单条五星出金记录
  *
- * @param itemName  角色名/武器名
- * @param time      出金时间（原始字符串，形如 "yyyy-MM-dd HH:mm:ss"）
- * @param interval  距上一条五星的间隔抽数（首条为从池子起始算起的抽数）
- * @param poolName  所属卡池名
+ * @param itemName    角色名/武器名
+ * @param time        出金时间（原始字符串，形如 "yyyy-MM-dd HH:mm:ss"）
+ * @param interval    距上一条五星的间隔抽数（首条为从池子起始算起的抽数）
+ * @param poolName    所属卡池名
+ * @param orderNumber 抽卡序号（用于正确排序，time 只有秒级精度不可靠）
  */
 data class FiveStarTimelineItem(
     val itemName: String,
     val time: String,
     val interval: Int,
-    val poolName: String
+    val poolName: String,
+    val orderNumber: String
 )
 
 data class StatsUiState(
@@ -147,9 +149,9 @@ class StatsViewModel @Inject constructor(
     /**
      * 构建五星出金时间轴。
      *
-     * 算法：把每个池的记录按 time 正序排列，逐条计算距上一条五星的间隔抽数。
      * 角色池 301 和 400 共享保底，合并后计算间隔，避免出现超过保底上限的不合理间隔。
-     * 最终按出金时间正序（从早到晚）排列，便于时间轴从左到右展示。
+     * 最终按 orderNumber 正序（从早到晚）排列，便于时间轴从左到右展示。
+     * 间隔计算委托给 GachaStatsCalculator，保证与统计页结果一致。
      */
     private fun buildFiveStarTimeline(
         characterRecords: List<GachaRecordEntity>,
@@ -166,13 +168,13 @@ class StatsViewModel @Inject constructor(
         addPoolTimeline(timeline, standardRecords, "常驻池")
         addPoolTimeline(timeline, noviceRecords, "新手池")
         addPoolTimeline(timeline, chronicledRecords, "集录池")
-        // 按出金时间正序排列（从早到晚）
-        return timeline.sortedBy { it.time }
+        // 按 orderNumber 正序排列（从早到晚）
+        return timeline.sortedBy { it.orderNumber }
     }
 
     /**
      * 计算单个（或合并）卡池的五星间隔，结果追加到 [timeline]。
-     * 按 time 正序（与 GachaStatsCalculator 保持一致），间隔 = 当前位置 - 上次位置；首条五星为 index + 1。
+     * 使用 GachaStatsCalculator 计算间隔列表，保证计算口径统一。
      */
     private fun addPoolTimeline(
         timeline: MutableList<FiveStarTimelineItem>,
@@ -180,20 +182,24 @@ class StatsViewModel @Inject constructor(
         poolName: String
     ) {
         if (records.isEmpty()) return
-        val sorted = records.sortedBy { it.time }
-        var lastIndex = -1
-        for ((index, record) in sorted.withIndex()) {
-            if (record.rarity == 5) {
-                val interval = if (lastIndex == -1) index + 1 else index - lastIndex
+        // 用计算器获取间隔列表（内部已按 orderNumber 排序）
+        val intervals = statsCalculator.calculateFiveStarIntervals(records)
+        // 获取按 orderNumber 升序排列的五星记录
+        val fiveStars = records
+            .filter { it.rarity == 5 }
+            .sortedBy { it.orderNumber }
+        // 一一对应
+        for (i in fiveStars.indices) {
+            if (i < intervals.size) {
                 timeline.add(
                     FiveStarTimelineItem(
-                        itemName = record.itemName,
-                        time = record.time,
-                        interval = interval,
-                        poolName = poolName
+                        itemName = fiveStars[i].itemName,
+                        time = fiveStars[i].time,
+                        interval = intervals[i],
+                        poolName = poolName,
+                        orderNumber = fiveStars[i].orderNumber
                     )
                 )
-                lastIndex = index
             }
         }
     }

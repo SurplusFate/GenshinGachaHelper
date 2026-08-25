@@ -16,7 +16,7 @@ interface GachaRecordDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(records: List<GachaRecordEntity>): List<Long>
 
-    @Query("SELECT orderNumber FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY CAST(orderNumber AS INTEGER) DESC LIMIT 1")
+    @Query("SELECT orderNumber FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY CAST(orderNumber AS TEXT) DESC LIMIT 1")
     suspend fun getMaxOrderNumber(accountId: Long, poolType: Int): String?
 
     @Query("SELECT COUNT(*) FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType")
@@ -25,19 +25,25 @@ interface GachaRecordDao {
     @Query("SELECT COUNT(*) FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity")
     suspend fun getRarityCount(accountId: Long, poolType: Int, rarity: Int): Int
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY time DESC")
+    /**
+     * 按 orderNumber 倒序返回单池记录（最新在前）。
+     * orderNumber 是抽卡顺序的真实依据，time 只有秒级精度不可靠。
+     */
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY orderNumber DESC")
     suspend fun getRecordsByPool(accountId: Long, poolType: Int): List<GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId ORDER BY time DESC")
+    // ===== 分页查询（全部按 orderNumber 倒序，最新在前） =====
+
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId ORDER BY orderNumber DESC")
     fun getAllRecordsPaged(accountId: Long): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY time DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType ORDER BY orderNumber DESC")
     fun getRecordsPagedByPool(accountId: Long, poolType: Int): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = :rarity ORDER BY time DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = :rarity ORDER BY orderNumber DESC")
     fun getRecordsPagedByRarity(accountId: Long, rarity: Int): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity ORDER BY time DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity ORDER BY orderNumber DESC")
     fun getRecordsPagedByPoolAndRarity(
         accountId: Long,
         poolType: Int,
@@ -46,22 +52,22 @@ interface GachaRecordDao {
 
     // ===== 搜索查询 =====
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND itemName LIKE '%' || :query || '%' ORDER BY time DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND itemName LIKE '%' || :query || '%' ORDER BY orderNumber DESC")
     fun getRecordsPagedBySearch(accountId: Long, query: String): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND itemName LIKE '%' || :query || '%' ORDER BY time DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND itemName LIKE '%' || :query || '%' ORDER BY orderNumber DESC")
     fun getRecordsPagedByPoolAndSearch(accountId: Long, poolType: Int, query: String): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = :rarity AND itemName LIKE '%' || :query || '%' ORDER BY time DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = :rarity AND itemName LIKE '%' || :query || '%' ORDER BY orderNumber DESC")
     fun getRecordsPagedByRarityAndSearch(accountId: Long, rarity: Int, query: String): PagingSource<Int, GachaRecordEntity>
 
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity AND itemName LIKE '%' || :query || '%' ORDER BY time DESC")
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity AND itemName LIKE '%' || :query || '%' ORDER BY orderNumber DESC")
     fun getRecordsPagedByPoolAndRarityAndSearch(accountId: Long, poolType: Int, rarity: Int, query: String): PagingSource<Int, GachaRecordEntity>
 
     // ===== 聚合查询（统计页用） =====
 
-    /** 所有五星记录（历史页计算间隔 + 统计页时间轴用） */
-    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = 5 ORDER BY time DESC")
+    /** 所有五星记录（按 orderNumber 倒序，最新在前） */
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = 5 ORDER BY orderNumber DESC")
     suspend fun getAllFiveStars(accountId: Long): List<GachaRecordEntity>
 
     /** 按物品名聚合统计（图鉴 Tab 用） */
@@ -74,7 +80,7 @@ interface GachaRecordDao {
     """)
     suspend fun getItemCollection(accountId: Long): List<ItemCount>
 
-    /** 按天聚合统计（日历热力图用） */
+    /** 按天聚合统计（日历热力图用）—— 按日期倒序 */
     @Query("""
         SELECT substr(time, 1, 10) as date,
                COUNT(*) as count,
