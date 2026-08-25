@@ -1,6 +1,7 @@
 package com.genshin.gachahelper.ui.history
 
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,18 +18,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-// stickyHeader 在当前 Compose 版本不可用，使用 item 替代实现日期分组
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,8 +41,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
@@ -60,7 +61,6 @@ private sealed interface HistoryListItem {
     data class Record(val index: Int, val record: GachaRecordEntity) : HistoryListItem
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     val filter by viewModel.filter.collectAsState()
@@ -74,12 +74,16 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
         // 搜索栏
         SearchBar(query = searchQuery, onQueryChange = viewModel::setSearchQuery)
 
-        // 筛选 Chips（选中态高亮）
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // 筛选 Chips
         FilterChips(
             filter = filter,
             onPoolChange = viewModel::setPoolFilter,
             onRarityChange = viewModel::setRarityFilter
         )
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         // 统计摘要栏
         SummaryBar(summary = summary)
@@ -91,7 +95,6 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
         if (isEmpty) {
             EmptyState(modifier = Modifier.weight(1f))
         } else {
-            // 把已加载的分页数据按日期拍平，在日期切换处插入分组头
             val listItems = remember(records.itemCount) {
                 buildList<HistoryListItem> {
                     var lastDate: String? = null
@@ -109,7 +112,8 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
 
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 16.dp)
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 listItems.forEach { listItem ->
                     when (listItem) {
@@ -135,9 +139,8 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     }
 }
 
-/**
- * 搜索栏：圆角 pill 样式的输入框。
- */
+// ============================ 搜索栏 ============================
+
 @Composable
 fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
     OutlinedTextField(
@@ -145,36 +148,52 @@ fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
         onValueChange = onQueryChange,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        placeholder = { Text("搜索角色/武器名称") },
-        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        placeholder = {
+            Text(
+                text = "搜索角色/武器名称",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        leadingIcon = {
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
         trailingIcon = {
             if (query.isNotEmpty()) {
                 IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Filled.Close, contentDescription = "清除")
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "清除",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         },
         singleLine = true,
-        shape = RoundedCornerShape(24.dp)
+        shape = RoundedCornerShape(24.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        )
     )
 }
 
-/**
- * 筛选 Chips：卡池行 + 星级行，FilterChip 自带选中态高亮。
- */
+// ============================ 筛选 Chips ============================
+
 @Composable
 fun FilterChips(
     filter: HistoryFilter,
     onPoolChange: (Int?) -> Unit,
     onRarityChange: (Int?) -> Unit
 ) {
-    Column(modifier = Modifier.padding(horizontal = 12.dp)) {
-        Text(
-            text = "卡池",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        // 卡池筛选行
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
@@ -183,25 +202,34 @@ fun FilterChips(
                 FilterChip(
                     selected = filter.poolType == null,
                     onClick = { onPoolChange(null) },
-                    label = { Text("全部") }
+                    label = { Text("全部", style = MaterialTheme.typography.labelMedium) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 )
             }
             items(GachaType.entries.toList()) { pool ->
                 FilterChip(
                     selected = filter.poolType == pool.value,
                     onClick = { onPoolChange(pool.value) },
-                    label = { Text(pool.displayName) }
+                    label = {
+                        Text(
+                            text = pool.displayName,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
-        Text(
-            text = "星级",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        // 星级筛选行
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
@@ -210,67 +238,132 @@ fun FilterChips(
                 FilterChip(
                     selected = filter.rarity == null,
                     onClick = { onRarityChange(null) },
-                    label = { Text("全部") }
+                    label = { Text("全部", style = MaterialTheme.typography.labelMedium) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 )
             }
             item {
                 FilterChip(
                     selected = filter.rarity == 5,
                     onClick = { onRarityChange(5) },
-                    label = { Text("五星", color = FiveStarColor) }
+                    label = {
+                        Text(
+                            text = "五星",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (filter.rarity == 5) MaterialTheme.colorScheme.onPrimaryContainer
+                            else FiveStarColor
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = FiveStarColor.copy(alpha = 0.2f),
+                        selectedLabelColor = FiveStarColor
+                    )
                 )
             }
             item {
                 FilterChip(
                     selected = filter.rarity == 4,
                     onClick = { onRarityChange(4) },
-                    label = { Text("四星", color = FourStarColor) }
+                    label = {
+                        Text(
+                            text = "四星",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (filter.rarity == 4) MaterialTheme.colorScheme.onPrimaryContainer
+                            else FourStarColor
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = FourStarColor.copy(alpha = 0.2f),
+                        selectedLabelColor = FourStarColor
+                    )
                 )
             }
             item {
                 FilterChip(
                     selected = filter.rarity == 3,
                     onClick = { onRarityChange(3) },
-                    label = { Text("三星", color = ThreeStarColor) }
+                    label = {
+                        Text(
+                            text = "三星",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (filter.rarity == 3) MaterialTheme.colorScheme.onPrimaryContainer
+                            else ThreeStarColor
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = ThreeStarColor.copy(alpha = 0.2f),
+                        selectedLabelColor = ThreeStarColor
+                    )
                 )
             }
         }
     }
 }
 
-/**
- * 统计摘要栏：一行 4 格，总抽数/五星数/四星数/当前垫抽。
- */
+// ============================ 统计摘要栏 ============================
+
 @Composable
 fun SummaryBar(summary: HistorySummary) {
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
-        SummaryCell(
-            label = "总抽数",
-            value = summary.totalPulls.toString(),
-            modifier = Modifier.weight(1f)
-        )
-        SummaryCell(
-            label = "五星数",
-            value = summary.fiveStarCount.toString(),
-            valueColor = FiveStarColor,
-            modifier = Modifier.weight(1f)
-        )
-        SummaryCell(
-            label = "四星数",
-            value = summary.fourStarCount.toString(),
-            valueColor = FourStarColor,
-            modifier = Modifier.weight(1f)
-        )
-        SummaryCell(
-            label = "当前垫抽",
-            value = summary.currentPity.toString(),
-            modifier = Modifier.weight(1f)
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            SummaryCell(
+                label = "总抽数",
+                value = summary.totalPulls.toString(),
+                modifier = Modifier.weight(1f)
+            )
+            // 分隔线
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(32.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            )
+            SummaryCell(
+                label = "五星",
+                value = summary.fiveStarCount.toString(),
+                valueColor = FiveStarColor,
+                modifier = Modifier.weight(1f)
+            )
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(32.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            )
+            SummaryCell(
+                label = "四星",
+                value = summary.fourStarCount.toString(),
+                valueColor = FourStarColor,
+                modifier = Modifier.weight(1f)
+            )
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(32.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            )
+            SummaryCell(
+                label = "当前垫抽",
+                value = summary.currentPity.toString(),
+                valueColor = if (summary.currentPity >= 60) FiveStarColor
+                else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 
@@ -281,57 +374,65 @@ fun SummaryCell(
     modifier: Modifier = Modifier,
     valueColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
-    Card(
+    Column(
         modifier = modifier,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = value,
-                color = valueColor,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = valueColor
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
-/**
- * 日期分组粘性头：显示日期 + 当天抽数 + 当天五星数（如有）。
- */
+// ============================ 日期分组头 ============================
+
 @Composable
 fun DateHeader(date: String, dayStat: DayStat?) {
+    val hasFive = dayStat != null && dayStat.fiveCount > 0
     Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = if (hasFive) FiveStarColor.copy(alpha = 0.12f)
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = date,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
-            )
-            val hasFive = dayStat != null && dayStat.fiveCount > 0
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // 日期前的小圆点指示器
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (hasFive) FiveStarColor
+                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                        )
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = date,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (hasFive) FiveStarColor
+                    else MaterialTheme.colorScheme.onSurface
+                )
+            }
             val countText = buildString {
                 append("${dayStat?.count ?: 0} 抽")
                 if (hasFive) {
@@ -341,15 +442,16 @@ fun DateHeader(date: String, dayStat: DayStat?) {
             Text(
                 text = countText,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (hasFive) FiveStarColor else MaterialTheme.colorScheme.onSurfaceVariant
+                fontWeight = FontWeight.Medium,
+                color = if (hasFive) FiveStarColor
+                else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
 }
 
-/**
- * 记录项：圆角方块星级徽章 + 名称/池名/五星间隔标签 + HH:mm 时间。
- */
+// ============================ 记录项 ============================
+
 @Composable
 fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) {
     val rarityColor = when (record.rarity) {
@@ -357,31 +459,33 @@ fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) 
         4 -> FourStarColor
         else -> ThreeStarColor
     }
-    // 时间简化为 HH:mm（time 形如 "yyyy-MM-dd HH:mm:ss"，取第 11-15 位）
     val timeText = if (record.time.length >= 16) record.time.substring(11, 16) else record.time.takeLast(5)
 
-    Card(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            .padding(vertical = 2.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            width = 1.dp,
+            color = rarityColor.copy(alpha = 0.15f)
+        )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 星级徽章：圆角方块显示数字 5/4/3，配对应颜色边框
+            // 星级徽章：圆角方块，带背景色
             Box(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(8.dp))
+                    .background(rarityColor.copy(alpha = 0.15f))
                     .border(
-                        width = 2.dp,
+                        width = 1.5.dp,
                         color = rarityColor,
                         shape = RoundedCornerShape(8.dp)
                     ),
@@ -390,7 +494,7 @@ fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) 
                 Text(
                     text = record.rarity.toString(),
                     color = rarityColor,
-                    fontSize = 16.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -401,28 +505,33 @@ fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) 
                 Text(
                     text = record.itemName,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    color = if (record.rarity == 5) rarityColor
+                    else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
                         text = poolTypeName,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     // 五星记录额外显示间隔标签
                     if (record.rarity == 5 && interval != null) {
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = FiveStarColor
+                            shape = RoundedCornerShape(10.dp),
+                            color = FiveStarColor.copy(alpha = 0.15f)
                         ) {
                             Text(
-                                text = "距上次五星 $interval 抽",
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                color = Color.Black,
-                                fontSize = 11.sp,
+                                text = "距上次 $interval 抽",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                color = FiveStarColor,
+                                style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -432,26 +541,35 @@ fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) 
 
             Text(
                 text = timeText,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
 }
 
-/**
- * 空状态：无数据时显示"暂无抽卡记录"。
- */
+// ============================ 空状态 ============================
+
 @Composable
 fun EmptyState(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = "暂无抽卡记录",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "暂无抽卡记录",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "先去首页同步或导入数据",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
+        }
     }
 }

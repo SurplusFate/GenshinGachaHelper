@@ -1,5 +1,9 @@
 package com.genshin.gachahelper.ui.home
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,10 +13,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -20,16 +27,23 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.genshin.gachahelper.analysis.PoolStats
@@ -94,13 +108,27 @@ fun HomeScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            top = 12.dp, bottom = 24.dp
+        )
     ) {
-        // 1. Hero 卡片：累计抽数 + 五星数 / 平均出金 / UP率
-        item { HeroCard(uiState) }
+        // 1. Hero + 运气环 (方案A + 方案C 融合)
+        item { HeroLuckCard(uiState) }
 
-        // 2. 保底进度网格（2 列）
+        // 2. 最近出金横滑 (方案B)
+        if (uiState.recentFiveStars.isNotEmpty()) {
+            item { SectionHeader("最近出金") }
+            item {
+                RecentFiveStarsRow(
+                    records = uiState.recentFiveStars,
+                    intervals = uiState.recentFiveStarIntervals
+                )
+            }
+        }
+
+        // 3. 保底进度网格 (方案A)
         item { SectionHeader("保底进度") }
         val pools = listOf(
             "角色池" to uiState.characterStats,
@@ -122,35 +150,25 @@ fun HomeScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
-                // 单数池补位，保持两列对齐
                 if (rowPools.size < 2) {
                     Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }
 
-        // 3. 最近五星横滑
-        if (uiState.recentFiveStars.isNotEmpty()) {
-            item { SectionHeader("最近五星") }
-            item {
-                RecentFiveStarsRow(
-                    records = uiState.recentFiveStars,
-                    intervals = uiState.recentFiveStarIntervals
-                )
-            }
-        }
+        // 4. 运气拆解 (方案C)
+        item { SectionHeader("运气拆解") }
+        item { LuckDetailCard(uiState) }
 
-        // 4. 同步按钮（登录态）/ 登录提示（未登录但有数据）
+        // 5. 同步按钮
         item { SyncSection(uiState, viewModel, navController) }
-
-        item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }
 
-// ============================ Hero 卡片 ============================
+// ============================ Hero + 运气环 ============================
 
 @Composable
-private fun HeroCard(uiState: HomeUiState) {
+private fun HeroLuckCard(uiState: HomeUiState) {
     val stats = listOfNotNull(
         uiState.characterStats,
         uiState.character2Stats,
@@ -170,77 +188,117 @@ private fun HeroCard(uiState: HomeUiState) {
             (uiState.character2Stats?.fiveStarCount ?: 0)
     val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
 
+    // 运气评分
+    val luckScore = calculateLuckScore(avgPulls, totalFiveStars)
+    val luckVerdict = luckVerdictText(luckScore)
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer
         ),
+        shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            // 账号信息行
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // 左侧：大数字 + 三栏统计
+            Column(modifier = Modifier.weight(1f)) {
+                // 账号信息行
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (uiState.isLoggedIn) (uiState.nickname ?: "旅行者")
+                        else "本地数据",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "UID: ${uiState.uid ?: "未知"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 大数字
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = "$totalPulls",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "抽",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
                 Text(
-                    text = if (uiState.isLoggedIn) (uiState.nickname ?: "旅行者")
-                    else "本地数据",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Text(
-                    text = "UID: ${uiState.uid ?: "未知"}",
+                    text = "五星 $totalFiveStars · 平均 ${String.format("%.1f", avgPulls)} 抽出金",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // 三栏统计
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    HeroStat(
+                        label = "五星数",
+                        value = "$totalFiveStars",
+                        valueColor = FiveStarColor,
+                        modifier = Modifier.weight(1f)
+                    )
+                    HeroStat(
+                        label = "平均出金",
+                        value = if (totalFiveStars > 0)
+                            String.format("%.1f", avgPulls) else "—",
+                        valueSuffix = if (totalFiveStars > 0) "抽" else "",
+                        modifier = Modifier.weight(1f)
+                    )
+                    HeroStat(
+                        label = "UP率",
+                        value = if (charFiveStars > 0)
+                            String.format("%.0f", upRate) else "—",
+                        valueSuffix = if (charFiveStars > 0) "%" else "",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 大数字：累计抽数
-            Row(
-                verticalAlignment = Alignment.Bottom
+            // 右侧：运气环
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                LuckRing(score = luckScore)
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "$totalPulls",
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Bold,
+                    text = luckVerdict,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
-                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "抽",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 三个指标
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                HeroStat(
-                    label = "五星数",
-                    value = "$totalFiveStars",
-                    valueColor = FiveStarColor
-                )
-                HeroStat(
-                    label = "平均出金",
-                    value = if (totalFiveStars > 0)
-                        "${String.format("%.1f", avgPulls)}" else "—",
-                    valueSuffix = "抽"
-                )
-                HeroStat(
-                    label = "UP率",
-                    value = if (charFiveStars > 0)
-                        "${String.format("%.0f", upRate)}" else "—",
-                    valueSuffix = "%"
+                    text = "高于 $luckScore% 旅行者",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                 )
             }
         }
@@ -251,14 +309,15 @@ private fun HeroCard(uiState: HomeUiState) {
 private fun HeroStat(
     label: String,
     value: String,
+    modifier: Modifier = Modifier,
     valueColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
     valueSuffix: String = ""
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
         )
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
@@ -270,10 +329,58 @@ private fun HeroStat(
             if (valueSuffix.isNotEmpty()) {
                 Text(
                     text = valueSuffix,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = valueColor
+                    style = MaterialTheme.typography.labelSmall,
+                    color = valueColor,
+                    modifier = Modifier.padding(bottom = 2.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun LuckRing(score: Int) {
+    val animatedScore by animateFloatAsState(targetValue = score.toFloat(), label = "luck")
+    val primaryColor = MaterialTheme.colorScheme.onPrimaryContainer
+    val trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f)
+
+    Box(
+        modifier = Modifier.size(80.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = 6.dp.toPx()
+            // 背景圆
+            drawArc(
+                color = trackColor,
+                startAngle = 0f,
+                sweepAngle = 360f,
+                useCenter = false,
+                style = Stroke(width = stroke)
+            )
+            // 进度弧
+            val sweep = 360f * animatedScore / 100f
+            drawArc(
+                color = primaryColor,
+                startAngle = -90f,
+                sweepAngle = sweep,
+                useCenter = false,
+                style = Stroke(width = stroke, cap = StrokeCap.Round)
+            )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "$score",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                text = "LUCK",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                fontSize = 10.sp
+            )
         }
     }
 }
@@ -287,11 +394,10 @@ private fun PityGridCard(
     modifier: Modifier = Modifier
 ) {
     if (poolStats == null) {
-        Card(
+        Surface(
             modifier = modifier,
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-            )
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         ) {
             Column(
                 modifier = Modifier
@@ -301,14 +407,15 @@ private fun PityGridCard(
             ) {
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "暂无数据",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                 )
             }
         }
@@ -319,46 +426,56 @@ private fun PityGridCard(
     val pityLeft = poolStats.pityCeiling - poolStats.currentPity
     val progressColor = pityProgressColor(poolStats.currentPity)
 
-    Card(
+    Surface(
         modifier = modifier,
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Bottom
             ) {
                 Text(
-                    text = label,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
+                    text = "${poolStats.currentPity}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = progressColor
                 )
                 Text(
-                    text = "${poolStats.currentPity}/${poolStats.pityCeiling}",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = "/${poolStats.pityCeiling}",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            LinearProgressIndicator(
-                progress = { pityPercent },
+            Spacer(modifier = Modifier.height(6.dp))
+            // 胶囊形进度条
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(6.dp),
-                color = progressColor
-            )
-
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(pityPercent)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(progressColor)
+                )
+            }
             Spacer(modifier = Modifier.height(4.dp))
-
             Text(
                 text = "距保底 ${pityLeft} 抽",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 color = if (poolStats.currentPity >= 60) progressColor
-                else MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Medium
+                else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -394,9 +511,11 @@ private fun RecentFiveStarCard(
     record: GachaRecordEntity,
     interval: Int
 ) {
-    Card(
-        modifier = Modifier.width(140.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    Surface(
+        modifier = Modifier.width(130.dp),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(2.dp, FiveStarColor),
+        color = MaterialTheme.colorScheme.surface
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
@@ -407,24 +526,84 @@ private fun RecentFiveStarCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-
             Spacer(modifier = Modifier.height(4.dp))
-
             Text(
-                text = "${interval}抽",
-                style = MaterialTheme.typography.titleMedium,
+                text = "距上次 $interval 抽",
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
-                color = FourStarColor
+                color = FiveStarColor
             )
-
             Spacer(modifier = Modifier.height(4.dp))
-
             Text(
                 text = record.time.substringBefore(" ").ifEmpty { record.time },
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+// ============================ 运气拆解 ============================
+
+@Composable
+private fun LuckDetailCard(uiState: HomeUiState) {
+    val stats = listOfNotNull(
+        uiState.characterStats,
+        uiState.character2Stats,
+        uiState.weaponStats,
+        uiState.standardStats,
+        uiState.noviceStats,
+        uiState.chronicledStats
+    )
+    val totalPulls = stats.sumOf { it.totalPulls }
+    val totalFiveStars = stats.sumOf { it.fiveStarCount }
+    val avgPulls = if (totalFiveStars > 0) totalPulls.toDouble() / totalFiveStars else 0.0
+    val worstLuck = stats.maxOfOrNull { it.maxPullsForFiveStar } ?: 0
+    val bestLuck = stats.minOfOrNull { it.minPullsForFiveStar } ?: 0
+    val recentInterval = uiState.recentFiveStarIntervals.firstOrNull() ?: 0
+
+    val upFiveStars = (uiState.characterStats?.upFiveStarCount ?: 0) +
+            (uiState.character2Stats?.upFiveStarCount ?: 0)
+    val charFiveStars = (uiState.characterStats?.fiveStarCount ?: 0) +
+            (uiState.character2Stats?.fiveStarCount ?: 0)
+    val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            LuckDetailRow("平均出金", String.format("%.1f 抽", avgPulls), MaterialTheme.colorScheme.primary)
+            LuckDetailRow("最近五星", "$recentInterval 抽", Color(0xFF1DC981))
+            LuckDetailRow("最非", "$worstLuck 抽", MaterialTheme.colorScheme.error)
+            LuckDetailRow("最欧", "$bestLuck 抽", FiveStarColor)
+            LuckDetailRow("UP成功率", String.format("%.0f%%", upRate), MaterialTheme.colorScheme.primary)
+            LuckDetailRow("总抽数", "$totalPulls", MaterialTheme.colorScheme.onSurface)
+        }
+    }
+}
+
+@Composable
+private fun LuckDetailRow(label: String, value: String, valueColor: Color) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = valueColor
+        )
     }
 }
 
@@ -450,7 +629,8 @@ private fun SyncSection(
                     }
                     Button(
                         onClick = { viewModel.sync() },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(24.dp)
                     ) {
                         Text("同步抽卡记录")
                     }
@@ -499,29 +679,28 @@ private fun SyncSection(
             }
         }
     } else {
-        // 未登录但有本地数据：登录提示
-        Card(
+        Surface(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer
-            )
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "本地数据",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSecondaryContainer
                 )
                 Text(
                     text = "UID: ${uiState.uid ?: "未知"}（手动导入）",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = { navController.navigate(Screen.Auth.route) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(24.dp)
                 ) {
                     Text("登录米游社以同步最新数据")
                 }
@@ -536,7 +715,26 @@ private fun SyncSection(
 private fun SectionHeader(title: String) {
     Text(
         text = title,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.Bold
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface
     )
+}
+
+// ============================ 运气评分计算 ============================
+
+/**
+ * 运气评分：基于平均出金抽数，avg=10→100分, avg=90→0分
+ */
+private fun calculateLuckScore(avgPulls: Double, totalFiveStars: Int): Int {
+    if (totalFiveStars == 0 || avgPulls <= 0) return 0
+    return ((90.0 - avgPulls) / 80.0 * 100).coerceIn(0.0, 100.0).toInt()
+}
+
+private fun luckVerdictText(score: Int): String = when {
+    score >= 80 -> "运气爆棚"
+    score >= 65 -> "运气还不错"
+    score >= 50 -> "运气一般般"
+    score >= 35 -> "运气有点差"
+    else -> "是非酋本酋"
 }
