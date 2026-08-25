@@ -147,7 +147,7 @@ class StatsViewModel @Inject constructor(
     /**
      * 构建五星出金时间轴。
      *
-     * 算法：把每个池的记录按 orderNumber 正序排列，逐条计算距上一条五星的间隔抽数。
+     * 算法：把每个池的记录按 time 正序排列，逐条计算距上一条五星的间隔抽数。
      * 角色池 301 和 400 共享保底，合并后计算间隔，避免出现超过保底上限的不合理间隔。
      * 最终按出金时间正序（从早到晚）排列，便于时间轴从左到右展示。
      */
@@ -172,7 +172,7 @@ class StatsViewModel @Inject constructor(
 
     /**
      * 计算单个（或合并）卡池的五星间隔，结果追加到 [timeline]。
-     * 按 orderNumber 正序（与 GachaStatsCalculator 保持一致），间隔 = 当前位置 - 上次位置；首条五星为 index + 1。
+     * 按 time 正序（与 GachaStatsCalculator 保持一致），间隔 = 当前位置 - 上次位置；首条五星为 index + 1。
      */
     private fun addPoolTimeline(
         timeline: MutableList<FiveStarTimelineItem>,
@@ -180,7 +180,7 @@ class StatsViewModel @Inject constructor(
         poolName: String
     ) {
         if (records.isEmpty()) return
-        val sorted = records.sortedBy { it.orderNumber.toLongOrNull() ?: 0L }
+        val sorted = records.sortedBy { it.time }
         var lastIndex = -1
         for ((index, record) in sorted.withIndex()) {
             if (record.rarity == 5) {

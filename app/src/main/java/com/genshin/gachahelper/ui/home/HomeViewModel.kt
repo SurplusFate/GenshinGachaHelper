@@ -224,7 +224,7 @@ class HomeViewModel @Inject constructor(
 
     /**
      * 计算一组记录中的五星出金间隔，结果写入 [result] Map。
-     * 按 orderNumber 正序排列，每遇到五星计算距上一条五星的位置差。
+     * 按 time 正序排列，每遇到五星计算距上一条五星的位置差。
      * 与 GachaStatsCalculator.calculateFiveStarIntervals 完全一致。
      */
     private fun computeIntervals(
@@ -232,7 +232,7 @@ class HomeViewModel @Inject constructor(
         result: MutableMap<Long, Int>
     ) {
         if (records.isEmpty()) return
-        val sorted = records.sortedBy { it.orderNumber.toLongOrNull() ?: 0L }
+        val sorted = records.sortedBy { it.time }
         var lastFiveStarIndex = -1
         for ((index, record) in sorted.withIndex()) {
             if (record.rarity == 5) {

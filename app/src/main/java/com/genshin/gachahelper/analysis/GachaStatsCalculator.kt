@@ -42,8 +42,8 @@ class GachaStatsCalculator @Inject constructor() {
         upItems: List<String> = emptyList(),
         sharedPityRecords: List<GachaRecordEntity> = emptyList()
     ): PoolStats {
-        // orderNumber 是 String，必须转 Long 排序，否则字典序错误（"999" > "2376"）
-        val sortedRecords = records.sortedByDescending { it.orderNumber.toLongOrNull() ?: 0L }
+        // 按 time 排序：orderNumber 是按池独立编号的，合并 301+400 池时按 orderNumber 排序会错乱
+        val sortedRecords = records.sortedByDescending { it.time }
         val poolName = GachaType.fromValue(poolType).displayName
         val pityCeiling = getPityCeiling(poolType)
 
@@ -57,7 +57,7 @@ class GachaStatsCalculator @Inject constructor() {
         // 如果提供了 sharedPityRecords（另一个共享池的记录），则合并后计算垫抽
         val currentPity = if (sharedPityRecords.isNotEmpty()) {
             val mergedForPity = (records + sharedPityRecords)
-                .sortedByDescending { it.orderNumber.toLongOrNull() ?: 0L }
+                .sortedByDescending { it.time }
             calculateCurrentPity(mergedForPity)
         } else {
             calculateCurrentPity(sortedRecords)
@@ -114,7 +114,7 @@ class GachaStatsCalculator @Inject constructor() {
      * 从最新记录向前回溯，找到最近一次五星，计算中间的抽数
      */
     fun calculateCurrentPity(records: List<GachaRecordEntity>): Int {
-        val sorted = records.sortedByDescending { it.orderNumber.toLongOrNull() ?: 0L }
+        val sorted = records.sortedByDescending { it.time }
         val lastFiveStarIndex = sorted.indexOfFirst { it.rarity == 5 }
         return if (lastFiveStarIndex == -1) {
             sorted.size // 从未出过五星，垫抽 = 总抽数
@@ -128,7 +128,7 @@ class GachaStatsCalculator @Inject constructor() {
      * 例如：[78, 42, 90, 12] 表示每次出金分别用了 78、42、90、12 抽
      */
     fun calculateFiveStarIntervals(records: List<GachaRecordEntity>): List<Int> {
-        val sorted = records.sortedBy { it.orderNumber.toLongOrNull() ?: 0L } // 正序，最老在前
+        val sorted = records.sortedBy { it.time } // 正序，最老在前
         val intervals = mutableListOf<Int>()
         var lastFiveStarIndex = -1
 

@@ -118,6 +118,36 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-25 · v1.4.1 修复排序与筛选数据错误（tag `v1.4.1`）
+
+**版本信息**
+
+- `versionCode = 10`，`versionName = "1.4.1"`
+- 修复 v1.4.0 中首页数据错误和历史页筛选结果错误的问题
+
+**Bug 1：首页数据不对 — orderNumber 跨池排序错误**
+
+- **根因**：`orderNumber` 是按池独立编号的（角色池 301 和 400 各自从 1 开始），不是全局唯一序号。当合并 301+400 计算保底/间隔时，按 `orderNumber` 排序导致两个池的记录错误交错，间隔和垫抽计算全部错误
+- **修复**：所有排序统一改为按 `time`（时间戳）排序，因为 `time` 是全局唯一的时间顺序指标
+- **影响文件**：
+  - `GachaStatsCalculator.kt`：`calculatePoolStats` / `calculateCurrentPity` / `calculateFiveStarIntervals` 三个方法
+  - `HomeViewModel.kt`：`computeIntervals` 方法
+  - `StatsViewModel.kt`：`addPoolTimeline` 方法
+  - `GachaRecordDao.kt`：全部 11 条查询的 `ORDER BY` 从 `CAST(orderNumber AS INTEGER) DESC` 改为 `time DESC`
+
+**Bug 2：历史页筛选结果不对 — 间隔/垫抽使用了被筛选后的记录**
+
+- **根因**：`HistoryViewModel.computeStats` 中五星间隔和垫抽计算使用了被稀有度筛选后的记录。例如筛选"五星"后，列表里只剩五星记录，间隔全部变成 1，垫抽始终为 0
+- **修复**：
+  - 五星间隔：改用未过滤的原始分池记录计算，只按 `poolType` 限定参与计算的池
+  - 垫抽：同样改用未过滤的原始记录，保证 `calculateCurrentPity` 能看到完整池历史
+  - 摘要栏的 `totalPulls` / `fiveStarCount` / `fourStarCount` 仍使用筛选后的记录（符合用户预期：筛选五星时只看到五星数量）
+- **影响文件**：`HistoryViewModel.kt` 的 `computeStats` 方法
+
+**附带修复**
+
+- 移除 `HistoryViewModel` 中 `StateFlow` 上的 `distinctUntilChanged()` 调用（`StateFlow` 本身只发送 distinct 值，加上会导致编译错误）
+
 ### 2026-08-25 · v1.4.0 三页面UI重构 + 代码清理与修复（commit `ac0a015`..`f46ad0d`，tag `v1.4.0`）
 
 **版本信息**

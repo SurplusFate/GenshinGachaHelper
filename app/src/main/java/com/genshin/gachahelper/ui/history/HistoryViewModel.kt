@@ -166,10 +166,8 @@ class HistoryViewModel @Inject constructor(
         }
 
         // 核心：每次 filter 变化，重新计算 stats（保证顶部摘要/间隔/每日统计与下方列表一致）
-        // 用 flatMapLatest 避免用户快速切换时的并发计算与过期结果覆盖
         viewModelScope.launch {
             _filter
-                .distinctUntilChanged()
                 .collect { _ ->
                     refreshStatsForCurrentAccountAndFilter()
                 }
@@ -195,7 +193,7 @@ class HistoryViewModel @Inject constructor(
 
     /**
      * 计算一组记录中的五星出金间隔，结果写入 [intervals] Map。
-     * 按 orderNumber 正序排列，每遇到五星计算距上一条五星的位置差。
+     * 按 time 正序排列，每遇到五星计算距上一条五星的位置差。
      * 与 GachaStatsCalculator.calculateFiveStarIntervals 完全一致。
      */
     private fun computeFiveStarIntervals(
@@ -203,7 +201,7 @@ class HistoryViewModel @Inject constructor(
         intervals: MutableMap<String, Int>
     ) {
         if (records.isEmpty()) return
-        val sorted = records.sortedBy { it.orderNumber.toLongOrNull() ?: 0L }
+        val sorted = records.sortedBy { it.time }
         var lastFiveStarIndex = -1
         for ((index, record) in sorted.withIndex()) {
             if (record.rarity == 5) {
@@ -265,56 +263,81 @@ class HistoryViewModel @Inject constructor(
         val novice = noviceRecords.filter(predicate)
         val chronicled = chronicledRecords.filter(predicate)
 
-        // 3. 按 poolType 切片。filterScopeLists = 真正参与 summary 统计的记录集合
+        // 3. 按 poolType 切片。allFiltered = 真正参与 summary 统计的记录集合
         val allFiltered: List<GachaRecordEntity>
-        val scopeForPity: List<List<GachaRecordEntity>> // 垫抽按"保底池维度"独立算
 
         when (filter.poolType) {
             null -> { // 全部池
                 allFiltered = char + char2 + weapon + standard + novice + chronicled
-                scopeForPity = listOf(char + char2, weapon, standard, novice, chronicled)
             }
             GachaType.CHARACTER.value -> {
                 allFiltered = char
-                scopeForPity = listOf(char + char2) // 角色池共享保底，垫抽时和 400 合并
             }
             GachaType.CHARACTER_2.value -> {
                 allFiltered = char2
-                scopeForPity = listOf(char + char2) // 同上
             }
             GachaType.WEAPON.value -> {
                 allFiltered = weapon
-                scopeForPity = listOf(weapon)
             }
             GachaType.STANDARD.value -> {
                 allFiltered = standard
-                scopeForPity = listOf(standard)
             }
             GachaType.NOVICE.value -> {
                 allFiltered = novice
-                scopeForPity = listOf(novice)
             }
             GachaType.CHRONICLED.value -> {
                 allFiltered = chronicled
-                scopeForPity = listOf(chronicled)
             }
             else -> { // 不识别的池值 → 回退为空，避免脏数据
                 allFiltered = emptyList()
-                scopeForPity = emptyList()
             }
         }
 
-        // 4. 五星出金间隔：与 GachaStatsCalculator 一致，按保底共享池维度各自计算
+        // 4. 五星出金间隔：使用未过滤的原始记录（保留完整池历史），
+        //    按 poolType 限定参与计算的池，按保底共享池维度各自计算
         val intervals = mutableMapOf<String, Int>()
-        computeFiveStarIntervals(char + char2, intervals)
-        computeFiveStarIntervals(weapon, intervals)
-        computeFiveStarIntervals(standard, intervals)
-        computeFiveStarIntervals(novice, intervals)
-        computeFiveStarIntervals(chronicled, intervals)
+        when (filter.poolType) {
+            null -> {
+                computeFiveStarIntervals(characterRecords + character2Records, intervals)
+                computeFiveStarIntervals(weaponRecords, intervals)
+                computeFiveStarIntervals(standardRecords, intervals)
+                computeFiveStarIntervals(noviceRecords, intervals)
+                computeFiveStarIntervals(chronicledRecords, intervals)
+            }
+            GachaType.CHARACTER.value, GachaType.CHARACTER_2.value -> {
+                computeFiveStarIntervals(characterRecords + character2Records, intervals)
+            }
+            GachaType.WEAPON.value -> {
+                computeFiveStarIntervals(weaponRecords, intervals)
+            }
+            GachaType.STANDARD.value -> {
+                computeFiveStarIntervals(standardRecords, intervals)
+            }
+            GachaType.NOVICE.value -> {
+                computeFiveStarIntervals(noviceRecords, intervals)
+            }
+            GachaType.CHRONICLED.value -> {
+                computeFiveStarIntervals(chronicledRecords, intervals)
+            }
+            else -> {}
+        }
         _fiveStarIntervals.value = intervals
 
-        // 5. 垫抽：按 scopeForPity 计算。选"全部池"时取最大值，其他情况直接返回该池垫抽
-        val pityValues = scopeForPity
+        // 5. 垫抽：使用未过滤的原始记录计算，选"全部池"时取最大值
+        val pityScopes: List<List<GachaRecordEntity>> = when (filter.poolType) {
+            null -> listOf(
+                characterRecords + character2Records,
+                weaponRecords, standardRecords, noviceRecords, chronicledRecords
+            )
+            GachaType.CHARACTER.value, GachaType.CHARACTER_2.value ->
+                listOf(characterRecords + character2Records)
+            GachaType.WEAPON.value -> listOf(weaponRecords)
+            GachaType.STANDARD.value -> listOf(standardRecords)
+            GachaType.NOVICE.value -> listOf(noviceRecords)
+            GachaType.CHRONICLED.value -> listOf(chronicledRecords)
+            else -> emptyList()
+        }
+        val pityValues = pityScopes
             .map { statsCalculator.calculateCurrentPity(it) }
             .filter { it > 0 }
         val pity = if (filter.poolType == null) pityValues.maxOrNull() ?: 0
