@@ -7,6 +7,7 @@ import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
+import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.sync.GachaSyncService
@@ -31,6 +32,8 @@ data class HomeUiState(
     val standardStats: PoolStats? = null,
     val noviceStats: PoolStats? = null,
     val chronicledStats: PoolStats? = null,
+    val recentFiveStars: List<GachaRecordEntity> = emptyList(),
+    val recentFiveStarIntervals: List<Int> = emptyList(),
     val syncState: SyncState = SyncState.Idle,
     val isLoading: Boolean = true
 )
@@ -161,6 +164,17 @@ class HomeViewModel @Inject constructor(
                 weaponStats != null || standardStats != null ||
                 noviceStats != null || chronicledStats != null
 
+        // 加载最近五星记录（最多 10 条），并计算每条五星距上一个五星的出金间隔
+        val poolRecords = mapOf(
+            GachaType.CHARACTER.value to characterRecords,
+            GachaType.CHARACTER_2.value to character2Records,
+            GachaType.WEAPON.value to weaponRecords,
+            GachaType.STANDARD.value to standardRecords,
+            GachaType.NOVICE.value to noviceRecords,
+            GachaType.CHRONICLED.value to chronicledRecords
+        )
+        val recentWithIntervals = loadRecentFiveStars(accountId, poolRecords)
+
         _uiState.value = _uiState.value.copy(
             characterStats = characterStats,
             character2Stats = character2Stats,
@@ -168,9 +182,43 @@ class HomeViewModel @Inject constructor(
             standardStats = standardStats,
             noviceStats = noviceStats,
             chronicledStats = chronicledStats,
+            recentFiveStars = recentWithIntervals.map { it.first },
+            recentFiveStarIntervals = recentWithIntervals.map { it.second },
             hasData = hasAnyData,
             isLoading = false
         )
+    }
+
+    /**
+     * 加载最近五星记录（最多 10 条），并计算每条五星的出金间隔。
+     *
+     * 间隔计算方式：对每个池使用 [GachaStatsCalculator.calculateFiveStarIntervals] 处理
+     * 对应池的全部记录，得到按时间正序排列的间隔列表，再按五星记录 id 映射回每条记录。
+     */
+    private suspend fun loadRecentFiveStars(
+        accountId: Long,
+        poolRecords: Map<Int, List<GachaRecordEntity>>
+    ): List<Pair<GachaRecordEntity, Int>> {
+        val allFiveStars = gachaRepository.getAllFiveStars(accountId)
+        val recent = allFiveStars.take(10)
+        if (recent.isEmpty()) return emptyList()
+
+        // 五星记录 id -> 出金间隔（距上一个五星多少抽）
+        val intervalById = mutableMapOf<Long, Int>()
+        for ((_, records) in poolRecords) {
+            if (records.isEmpty()) continue
+            val sortedAsc = records.sortedBy { it.orderNumber.toLongOrNull() ?: 0L }
+            val fiveStarsAsc = sortedAsc.filter { it.rarity == 5 }
+            val intervals = statsCalculator.calculateFiveStarIntervals(sortedAsc)
+            // intervals 按时间正序排列，第 i 个间隔对应第 i 个五星
+            for ((index, fiveStar) in fiveStarsAsc.withIndex()) {
+                intervalById[fiveStar.id] = intervals.getOrNull(index) ?: 0
+            }
+        }
+
+        return recent.map { fiveStar ->
+            fiveStar to (intervalById[fiveStar.id] ?: 0)
+        }
     }
 
     fun sync() {

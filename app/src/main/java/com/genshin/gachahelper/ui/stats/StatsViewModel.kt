@@ -7,6 +7,9 @@ import com.genshin.gachahelper.analysis.GachaStatsCalculator
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
+import com.genshin.gachahelper.data.local.dao.GachaRecordDao.DailyStat
+import com.genshin.gachahelper.data.local.dao.GachaRecordDao.ItemCount
+import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -18,10 +21,28 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 
+/**
+ * 时间轴单条五星出金记录
+ *
+ * @param itemName  角色名/武器名
+ * @param time      出金时间（原始字符串，形如 "yyyy-MM-dd HH:mm:ss"）
+ * @param interval  距上一条五星的间隔抽数（首条为从池子起始算起的抽数）
+ * @param poolName  所属卡池名
+ */
+data class FiveStarTimelineItem(
+    val itemName: String,
+    val time: String,
+    val interval: Int,
+    val poolName: String
+)
+
 data class StatsUiState(
     val report: GachaReport? = null,
     val isLoading: Boolean = true,
-    val hasData: Boolean = false
+    val hasData: Boolean = false,
+    val fiveStarTimeline: List<FiveStarTimelineItem> = emptyList(),
+    val itemCollection: List<ItemCount> = emptyList(),
+    val dailyStats: List<DailyStat> = emptyList()
 )
 
 @HiltViewModel
@@ -99,11 +120,80 @@ class StatsViewModel @Inject constructor(
                     chronicledRecords = chronicledRecords
                 )
 
+                // 额外加载时间轴 / 图鉴 / 日历三组数据
+                val fiveStarTimeline = buildFiveStarTimeline(
+                    characterRecords = characterRecords,
+                    character2Records = character2Records,
+                    weaponRecords = weaponRecords,
+                    standardRecords = standardRecords,
+                    noviceRecords = noviceRecords,
+                    chronicledRecords = chronicledRecords
+                )
+                val itemCollection = gachaRepository.getItemCollection(account.id)
+                val dailyStats = gachaRepository.getDailyStats(account.id)
+
                 _uiState.value = StatsUiState(
                     report = report,
                     isLoading = false,
-                    hasData = report.totalPulls > 0
+                    hasData = report.totalPulls > 0,
+                    fiveStarTimeline = fiveStarTimeline,
+                    itemCollection = itemCollection,
+                    dailyStats = dailyStats
                 )
+            }
+        }
+    }
+
+    /**
+     * 构建五星出金时间轴。
+     *
+     * 简化算法：把每个池的记录按 orderNumber 正序排列，逐条计算距上一条五星的间隔抽数。
+     * 角色池 301 和 400 共享保底，合并后计算间隔，避免出现超过保底上限的不合理间隔。
+     * 最终按出金时间正序（从早到晚）排列，便于时间轴从左到右展示。
+     */
+    private fun buildFiveStarTimeline(
+        characterRecords: List<GachaRecordEntity>,
+        character2Records: List<GachaRecordEntity>,
+        weaponRecords: List<GachaRecordEntity>,
+        standardRecords: List<GachaRecordEntity>,
+        noviceRecords: List<GachaRecordEntity>,
+        chronicledRecords: List<GachaRecordEntity>
+    ): List<FiveStarTimelineItem> {
+        val timeline = mutableListOf<FiveStarTimelineItem>()
+        // 角色池301和400共享保底，合并后计算间隔
+        addPoolTimeline(timeline, characterRecords + character2Records, "角色池")
+        addPoolTimeline(timeline, weaponRecords, "武器池")
+        addPoolTimeline(timeline, standardRecords, "常驻池")
+        addPoolTimeline(timeline, noviceRecords, "新手池")
+        addPoolTimeline(timeline, chronicledRecords, "集录池")
+        // 按出金时间正序排列（从早到晚）
+        return timeline.sortedBy { it.time }
+    }
+
+    /**
+     * 计算单个（或合并）卡池的五星间隔，结果追加到 [timeline]。
+     * 间隔 = 当前五星在正序记录中的位置 - 上一条五星的位置；首条五星为 index + 1。
+     */
+    private fun addPoolTimeline(
+        timeline: MutableList<FiveStarTimelineItem>,
+        records: List<GachaRecordEntity>,
+        poolName: String
+    ) {
+        if (records.isEmpty()) return
+        val sorted = records.sortedBy { it.orderNumber.toLongOrNull() ?: 0L }
+        var lastIndex = -1
+        for ((index, record) in sorted.withIndex()) {
+            if (record.rarity == 5) {
+                val interval = if (lastIndex == -1) index + 1 else index - lastIndex
+                timeline.add(
+                    FiveStarTimelineItem(
+                        itemName = record.itemName,
+                        time = record.time,
+                        interval = interval,
+                        poolName = poolName
+                    )
+                )
+                lastIndex = index
             }
         }
     }

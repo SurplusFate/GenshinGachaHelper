@@ -44,6 +44,48 @@ interface GachaRecordDao {
         rarity: Int
     ): PagingSource<Int, GachaRecordEntity>
 
+    // ===== 搜索查询 =====
+
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND itemName LIKE '%' || :query || '%' ORDER BY CAST(orderNumber AS INTEGER) DESC")
+    fun getRecordsPagedBySearch(accountId: Long, query: String): PagingSource<Int, GachaRecordEntity>
+
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND itemName LIKE '%' || :query || '%' ORDER BY CAST(orderNumber AS INTEGER) DESC")
+    fun getRecordsPagedByPoolAndSearch(accountId: Long, poolType: Int, query: String): PagingSource<Int, GachaRecordEntity>
+
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = :rarity AND itemName LIKE '%' || :query || '%' ORDER BY CAST(orderNumber AS INTEGER) DESC")
+    fun getRecordsPagedByRarityAndSearch(accountId: Long, rarity: Int, query: String): PagingSource<Int, GachaRecordEntity>
+
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND poolType = :poolType AND rarity = :rarity AND itemName LIKE '%' || :query || '%' ORDER BY CAST(orderNumber AS INTEGER) DESC")
+    fun getRecordsPagedByPoolAndRarityAndSearch(accountId: Long, poolType: Int, rarity: Int, query: String): PagingSource<Int, GachaRecordEntity>
+
+    // ===== 聚合查询（统计页用） =====
+
+    /** 所有五星记录（历史页计算间隔 + 统计页时间轴用） */
+    @Query("SELECT * FROM gacha_record WHERE accountId = :accountId AND rarity = 5 ORDER BY CAST(orderNumber AS INTEGER) DESC")
+    suspend fun getAllFiveStars(accountId: Long): List<GachaRecordEntity>
+
+    /** 按物品名聚合统计（图鉴 Tab 用） */
+    @Query("""
+        SELECT itemName, rarity, COUNT(*) as count, poolType
+        FROM gacha_record
+        WHERE accountId = :accountId
+        GROUP BY itemName, rarity
+        ORDER BY rarity DESC, count DESC
+    """)
+    suspend fun getItemCollection(accountId: Long): List<ItemCount>
+
+    /** 按天聚合统计（日历热力图用） */
+    @Query("""
+        SELECT substr(time, 1, 10) as date,
+               COUNT(*) as count,
+               SUM(CASE WHEN rarity = 5 THEN 1 ELSE 0 END) as fiveCount
+        FROM gacha_record
+        WHERE accountId = :accountId
+        GROUP BY date
+        ORDER BY date DESC
+    """)
+    suspend fun getDailyStats(accountId: Long): List<DailyStat>
+
     @Query("DELETE FROM gacha_record WHERE accountId = :accountId")
     suspend fun deleteAllByAccount(accountId: Long)
 
@@ -56,6 +98,21 @@ interface GachaRecordDao {
      */
     @Query("SELECT poolType, time, itemName FROM gacha_record WHERE accountId = :accountId")
     suspend fun getRecordKeysByAccount(accountId: Long): List<RecordKey>
+
+    // ===== 聚合数据类 =====
+
+    data class ItemCount(
+        val itemName: String,
+        val rarity: Int,
+        val count: Int,
+        val poolType: Int
+    )
+
+    data class DailyStat(
+        val date: String,
+        val count: Int,
+        val fiveCount: Int
+    )
 
     /**
      * 用于内容去重的数据类

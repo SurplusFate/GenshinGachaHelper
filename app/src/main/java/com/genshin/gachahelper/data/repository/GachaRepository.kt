@@ -6,6 +6,8 @@ import com.genshin.gachahelper.data.local.dao.PoolDao
 import com.genshin.gachahelper.data.local.entity.AccountEntity
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.local.entity.PoolEntity
+import com.genshin.gachahelper.data.local.dao.GachaRecordDao.DailyStat
+import com.genshin.gachahelper.data.local.dao.GachaRecordDao.ItemCount
 import com.genshin.gachahelper.data.local.dao.GachaRecordDao.RecordKey
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -73,6 +75,27 @@ class GachaRepository @Inject constructor(
 
     fun getRecordsPagedByPoolAndRarity(accountId: Long, poolType: Int, rarity: Int) =
         gachaRecordDao.getRecordsPagedByPoolAndRarity(accountId, poolType, rarity)
+
+    fun getRecordsPagedBySearch(accountId: Long, query: String) =
+        gachaRecordDao.getRecordsPagedBySearch(accountId, query)
+
+    fun getRecordsPagedByPoolAndSearch(accountId: Long, poolType: Int, query: String) =
+        gachaRecordDao.getRecordsPagedByPoolAndSearch(accountId, poolType, query)
+
+    fun getRecordsPagedByRarityAndSearch(accountId: Long, rarity: Int, query: String) =
+        gachaRecordDao.getRecordsPagedByRarityAndSearch(accountId, rarity, query)
+
+    fun getRecordsPagedByPoolAndRarityAndSearch(accountId: Long, poolType: Int, rarity: Int, query: String) =
+        gachaRecordDao.getRecordsPagedByPoolAndRarityAndSearch(accountId, poolType, rarity, query)
+
+    suspend fun getAllFiveStars(accountId: Long): List<GachaRecordEntity> =
+        gachaRecordDao.getAllFiveStars(accountId)
+
+    suspend fun getItemCollection(accountId: Long): List<ItemCount> =
+        gachaRecordDao.getItemCollection(accountId)
+
+    suspend fun getDailyStats(accountId: Long): List<DailyStat> =
+        gachaRecordDao.getDailyStats(accountId)
 
     suspend fun deleteAllByAccount(accountId: Long) =
         gachaRecordDao.deleteAllByAccount(accountId)
