@@ -118,6 +118,48 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-25 · v1.4.0 三页面UI重构 + 代码清理与修复（commit `ac0a015`..`f46ad0d`，tag `v1.4.0`）
+
+**版本信息**
+
+- `versionCode = 9`，`versionName = "1.4.0"`
+- 基于 v1.3.2 修复版，对首页/历史/统计三个核心页面进行 UI 重构，同时做代码清理与 bug 修复
+
+**UI 重构（commit `f46ad0d`）**
+
+1. **首页 (HomeScreen)** — ABC 三方案融合设计：
+   - Hero 运气环卡片：左侧大数字总抽数 + 三栏统计（五星数/平均出金/UP率），右侧 Canvas 绘制运气评分环（0-100 分，基于平均出金抽数计算）
+   - 最近出金横滑：LazyRow 展示最近五星记录，金色边框卡片
+   - 保底进度网格：2 列布局，胶囊形进度条，颜色随垫抽数变化（金色→橙色→红色）
+   - 运气拆解：平均出金/最近五星/最非/最欧/UP成功率/总抽数六行数据
+
+2. **统计页 (StatsScreen)** — 从 Tab 布局改为上下滑动单页：
+   - 四个区块连续排列：概览 → 时间轴 → 图鉴 → 日历
+   - 因当前 Compose 版本（BOM 2024.02.00）不含 `stickyHeader` API，改用**浮层吸顶导航栏**方案：`Box` 叠加 `LazyColumn` + 始终可见的 `Surface` 导航条
+   - 点击导航跳转 + 滚动自动高亮当前区块（`derivedStateOf` 追踪 `firstVisibleItemIndex`）
+   - 导航栏增加 `shadowElevation` 投影，`NavTab` 补上 `clickable` 修复点击无效
+
+3. **历史页 (HistoryScreen)** — 统一视觉风格：
+   - 搜索栏：`surfaceVariant` 半透明背景 + `outlineVariant` 边框
+   - 筛选 Chip：卡池行 + 星级行双行布局，星级选中态用对应颜色浅色背景
+   - 摘要栏：统一 `RoundedCornerShape(12)` + `surfaceVariant` 卡片，四格间加分隔线
+   - 日期头：带圆点指示器，有五星的日子用金色背景高亮
+   - 记录项：星级徽章加背景色和边框；五星名称用金色；间隔标签用浅色胶囊样式
+
+**代码清理与修复（commit `ac0a015`）**
+
+1. **五星间隔排序统一**（C1）：Home/History/Stats 三个 ViewModel 中五星间隔计算全部改为按 `orderNumber` 排序，与 `GachaStatsCalculator` 保持一致，消除 `time` 字符串排序导致的秒级相同记录顺序不稳定问题
+
+2. **移除验证码登录入口**（W5）：删除 AuthScreen 的验证码登录 TabRow，仅保留米游社扫码登录入口，文字提示统一改为"米游社 App 扫一扫"
+
+3. **统一稀有度解析**（W3）：抽取 `parseRarity` / `parseItemType` 为 `GachaEnums.kt` 顶层纯函数，API 响应解析和 UIGF 导入两处 `rank_type` / `item_type` 统一调用，消除 `contains("5")` 导致的 "15" / "S5" 误判
+
+4. **路由常量化**（N6）：新增 `Screen.Report` 路由常量，`GachaAppNavHost` / `StatsScreen` 中 "report" 硬编码改为 `Screen.Report.route`
+
+5. **删除死代码**（W1）：移除 `GachaRecordDao.getLatestOrderNumber` 及 Repository 包装（字典序排序错误 + 零调用）
+
+6. **预留接口**：`MihoyoApiService` 新增 `getStokenByCookieToken` 接口实现，为将来修复验证码登录保留后端入口
+
 ### 2026-08-25 · v1.3.2 修复五星间隔排序错误和垫抽计算逻辑（commit `0e41b0b`，tag `v1.3.2`）
 
 **版本信息**
