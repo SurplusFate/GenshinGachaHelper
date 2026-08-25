@@ -170,11 +170,10 @@ fun HomeScreen(
 
 @Composable
 private fun HeroLuckCard(uiState: HomeUiState) {
-    // 角色池301和400共享保底，两池统计已合并为同一份数据
-    // 汇总时只取一个角色池，避免重复计数（2651 抽被算两次 → 5302）
-    val charStats = uiState.characterStats ?: uiState.character2Stats
+    // 角色池301和400各自显示单池统计，汇总时两个池都计入
     val stats = listOfNotNull(
-        charStats,
+        uiState.characterStats,
+        uiState.character2Stats,
         uiState.weaponStats,
         uiState.standardStats,
         uiState.noviceStats,
@@ -184,8 +183,12 @@ private fun HeroLuckCard(uiState: HomeUiState) {
     val totalFiveStars = stats.sumOf { it.fiveStarCount }
     val avgPulls = if (totalFiveStars > 0) totalPulls.toDouble() / totalFiveStars else 0.0
 
-    // UP 率：角色池301和400共享50/50，两池已合并计算，取任意一个非空池的 upRate
-    val upRate = (uiState.characterStats?.upRate ?: uiState.character2Stats?.upRate ?: 0.0) * 100
+    // UP 率：仅角色池（301 + 400）统计
+    val upFiveStars = (uiState.characterStats?.upFiveStarCount ?: 0) +
+            (uiState.character2Stats?.upFiveStarCount ?: 0)
+    val charFiveStars = (uiState.characterStats?.fiveStarCount ?: 0) +
+            (uiState.character2Stats?.fiveStarCount ?: 0)
+    val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
 
     // 运气评分
     val luckScore = calculateLuckScore(avgPulls, totalFiveStars)
@@ -274,9 +277,9 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                     )
                     HeroStat(
                         label = "UP率",
-                        value = if (charStats != null)
+                        value = if (charFiveStars > 0)
                             String.format("%.0f", upRate) else "—",
-                        valueSuffix = if (charStats != null) "%" else "",
+                        valueSuffix = if (charFiveStars > 0) "%" else "",
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -652,11 +655,10 @@ private fun RecentFiveStarCard(
 
 @Composable
 private fun LuckDetailCard(uiState: HomeUiState) {
-    // 角色池301和400共享保底，两池统计已合并为同一份数据
-    // 汇总时只取一个角色池，避免重复计数
-    val charStats = uiState.characterStats ?: uiState.character2Stats
+    // 角色池301和400各自显示单池统计，汇总时两个池都计入
     val stats = listOfNotNull(
-        charStats,
+        uiState.characterStats,
+        uiState.character2Stats,
         uiState.weaponStats,
         uiState.standardStats,
         uiState.noviceStats,
@@ -671,8 +673,12 @@ private fun LuckDetailCard(uiState: HomeUiState) {
     val bestLuck = statsWithFiveStars.minOfOrNull { it.minPullsForFiveStar } ?: 0
     val recentInterval = uiState.recentFiveStarIntervals.firstOrNull() ?: 0
 
-    // UP率：角色池301和400共享50/50，两池已合并计算，取任意一个非空池的 upRate
-    val upRate = (uiState.characterStats?.upRate ?: uiState.character2Stats?.upRate ?: 0.0) * 100
+    // UP率：仅角色池（301 + 400）统计
+    val upFiveStars = (uiState.characterStats?.upFiveStarCount ?: 0) +
+            (uiState.character2Stats?.upFiveStarCount ?: 0)
+    val charFiveStars = (uiState.characterStats?.fiveStarCount ?: 0) +
+            (uiState.character2Stats?.fiveStarCount ?: 0)
+    val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
 
     Surface(
         modifier = Modifier.fillMaxWidth(),

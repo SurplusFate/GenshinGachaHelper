@@ -209,12 +209,12 @@ class HomeViewModel @Inject constructor(
         // 角色池 301+400 合并计算
         val charRecords = (poolRecords[GachaType.CHARACTER.value].orEmpty() +
             poolRecords[GachaType.CHARACTER_2.value].orEmpty())
-        computeIntervals(charRecords, intervalById)
+        computeIntervals(charRecords, intervalById, statsCalculator.getPityCeiling(GachaType.CHARACTER.value))
 
         // 其他池单独计算
         for ((type, records) in poolRecords) {
             if (type == GachaType.CHARACTER.value || type == GachaType.CHARACTER_2.value) continue
-            computeIntervals(records, intervalById)
+            computeIntervals(records, intervalById, statsCalculator.getPityCeiling(type))
         }
 
         return recent.map { fiveStar ->
@@ -225,11 +225,13 @@ class HomeViewModel @Inject constructor(
     /**
      * 计算一组记录中的五星出金间隔，结果写入 [result] Map。
      * 按 time 正序排列，每遇到五星计算距上一条五星的位置差。
-     * 与 GachaStatsCalculator.calculateFiveStarIntervals 完全一致。
+     * 与 GachaStatsCalculator.calculateFiveStarIntervals 逻辑一致。
+     * @param pityCeiling 保底上限，超过此值的间隔不写入（数据不完整导致的不可能值）
      */
     private fun computeIntervals(
         records: List<GachaRecordEntity>,
-        result: MutableMap<Long, Int>
+        result: MutableMap<Long, Int>,
+        pityCeiling: Int = 0
     ) {
         if (records.isEmpty()) return
         val sorted = records.sortedBy { it.time }
@@ -238,7 +240,10 @@ class HomeViewModel @Inject constructor(
             if (record.rarity == 5) {
                 val interval = if (lastFiveStarIndex == -1) index + 1
                 else index - lastFiveStarIndex
-                result[record.id] = interval
+                // 过滤超过保底上限的不可能值
+                if (pityCeiling <= 0 || interval <= pityCeiling) {
+                    result[record.id] = interval
+                }
                 lastFiveStarIndex = index
             }
         }

@@ -118,7 +118,40 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
-### 2026-08-25 · v1.4.3 修复共享保底池统计一致性（tag `v1.4.3`）
+### 2026-08-25 · v1.4.4 修复v1.4.3引入的多个回归问题（tag `v1.4.4`）
+
+**版本信息**
+
+- `versionCode = 13`，`versionName = "1.4.4"`
+- 修复 v1.4.3 中将共享保底池所有统计指标改为合并记录后引入的多个回归问题
+
+**Bug 1：新手池20抽变成19抽**
+
+- **根因**：`currentPity` 钳制到 `pityCeiling - 1 = 19`，但新手池的 `pityCeiling=20` 是「池总抽数」不是五星保底阈值，20/20 表示池已关闭，不应减1
+- **修复**：新手池 `currentPity` 钳制到 `pityCeiling`（20），其他池仍钳制到 `pityCeiling - 1`
+
+**Bug 2：最非变成95抽（超过保底上限90）**
+
+- **根因**：数据不完整时（缺少五星记录），`calculateFiveStarIntervals` 计算的间隔可能超过保底上限（如第一条间隔=数据起始到第一个五星的位置），产生物理上不可能的值
+- **修复**：`calculateFiveStarIntervals` 新增 `pityCeiling` 参数，过滤超过保底上限的间隔；`HistoryViewModel` 和 `HomeViewModel` 的间隔计算同步加入过滤
+
+**Bug 3：首页保底进度所有池子进度条都满**
+
+- **根因**：v1.4.3 将 `totalPulls`/`fiveStarCount` 也改为合并记录，导致角色池显示的抽数/五星数与历史页不一致；同时数据不完整时 `currentPity` 被钳制到上限附近，进度条显示95%+
+- **修复**：`totalPulls`/`fiveStarCount`/`fourStarCount`/`threeStarCount` 回退为单池记录（与历史页记录数一致），`currentPity`/`fiveStarIntervals`/`avgPullsPerFiveStar`/`lastFiveStar` 保持用合并记录（保底相关指标）
+
+**Bug 4：角色池统计与历史页不一致**
+
+- **根因**：v1.4.3 合并后角色池-2 显示 totalPulls=2651 fiveStarCount=48（合并值），但历史页只有535条记录、5个五星（单池值），用户质疑数据不对
+- **修复**：回退为单池显示，角色池-2 显示535抽5金（与历史页一致），保底进度/间隔/平均出金仍用合并值（共享保底正确）
+
+**影响文件**：
+- `GachaStatsCalculator.kt`：`calculatePoolStats` + `calculateFiveStarIntervals` + `generateReport`
+- `HomeScreen.kt`：`HeroLuckCard` + `LuckDetailCard`
+- `HomeViewModel.kt`：`computeIntervals`
+- `HistoryViewModel.kt`：`computeFiveStarIntervals` + `computeStats`
+
+### 2026-08-25 · v1.4.3 修复共享保底池统计一致性（tag `v1.4.3`，已被v1.4.4取代）
 
 **版本信息**
 
