@@ -79,10 +79,18 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         // 账号管理
         SettingsSection(title = "账号管理") {
             if (uiState.isLoggedIn) {
-                Text(text = "UID: ${uiState.uid}")
+                // 已登录：直接显示登录 UID（即使没有抽卡数据也正常显示）
+                Text(text = "UID: ${uiState.uid ?: "未知"}")
                 if (uiState.nickname != null) {
                     Text(
                         text = "昵称: ${uiState.nickname}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (!uiState.hasData) {
+                    Text(
+                        text = "尚未导入/同步抽卡数据",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -88,15 +88,25 @@ class HomeViewModel @Inject constructor(
             loadMutex.withLock {
                 _uiState.value = _uiState.value.copy(isLoading = true)
                 val loggedIn = authRepository.isLoggedIn()
-                val uid = authRepository.getUid()
+                val authUid = authRepository.getUid()
                 val nickname = authRepository.getNickname()
 
                 // 通过活跃账号解析：登录时用登录 UID，未登录时回退到最近导入的账号
-                val account = gachaRepository.getActiveAccount(uid)
+                val account = gachaRepository.getActiveAccount(authUid)
+
+                // UID 显示优先级：
+                // 1. 已登录 → 登录 UID（不依赖 AccountEntity）
+                // 2. 未登录但有本地数据 → 本地数据 UID
+                // 3. 未登录且无数据 → null（UI 显示"未绑定"）
+                val displayUid = when {
+                    loggedIn -> authUid
+                    account != null -> account.uid
+                    else -> null
+                }
 
                 _uiState.value = _uiState.value.copy(
                     isLoggedIn = loggedIn,
-                    uid = account?.uid,
+                    uid = displayUid,
                     nickname = nickname
                 )
 

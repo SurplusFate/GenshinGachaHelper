@@ -73,6 +73,16 @@ class GachaSyncService @Inject constructor(
             val server = authRepository.getServer() ?: "cn_gf01"
             val nickname = authRepository.getNickname()
 
+            // ===== UID 校验：同步数据也必须验证归属 UID =====
+            // 如果本地已有数据 UID，必须与登录 UID 一致才能继续同步
+            val localAccount = gachaRepository.getActiveAccount(null)
+            val localDataUid = localAccount?.uid
+            if (!localDataUid.isNullOrBlank() && localDataUid != uid) {
+                throw IllegalStateException(
+                    "UID 不一致：本地数据 UID 为 $localDataUid，登录账号 UID 为 $uid，拒绝同步"
+                )
+            }
+
             // 2. 生成/获取 authkey（每次同步前确保 authkey 有效）
             _syncState.value = SyncState.Loading("获取授权凭证...")
 

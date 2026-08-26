@@ -12,6 +12,7 @@ import com.genshin.gachahelper.auth.QrCodeData
 import com.genshin.gachahelper.auth.QrCodeGenerator
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
+import com.genshin.gachahelper.data.repository.GachaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,7 +29,8 @@ import javax.inject.Inject
 class AuthViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val mihoyoApi: MihoyoApiService,
-    private val sessionEventBus: SessionEventBus
+    private val sessionEventBus: SessionEventBus,
+    private val gachaRepository: GachaRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AuthUiState())
@@ -669,11 +671,27 @@ class AuthViewModel @Inject constructor(
                 selectedRole = role,
                 statusText = "正在生成授权凭证...",
                 error = null,
-                debugInfo = "角色: ${role.nickname} (${role.uid})\n正在生成 authkey..."
+                debugInfo = "角色: ${role.nickname} (${role.uid})\n正在验证 UID..."
             )
         }
 
         viewModelScope.launch {
+            // ===== UID 校验：先导入后登录场景 =====
+            // 如果本地已有数据 UID，必须与登录 UID 一致才能绑定
+            val localAccount = gachaRepository.getActiveAccount(null)
+            val localDataUid = localAccount?.uid
+            if (!localDataUid.isNullOrBlank() && localDataUid != role.uid) {
+                setState {
+                    copy(
+                        phase = AuthPhase.ROLE_SELECT,
+                        error = "UID 不一致：本地数据 UID 为 $localDataUid，登录账号 UID 为 ${role.uid}。\n" +
+                            "禁止将现有数据绑定到该账号。请先清除本地数据或使用 UID 为 $localDataUid 的账号登录。",
+                        debugInfo = "UID 校验失败：local=$localDataUid, login=${role.uid}"
+                    )
+                }
+                return@launch
+            }
+
             authRepository.saveGameRole(
                 uid = role.uid,
                 server = role.region,

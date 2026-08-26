@@ -54,8 +54,14 @@ class GachaDataImporter @Inject constructor(
 
     /**
      * 从文件 URI 导入抽卡记录
+     * @param authUid 已登录用户的 UID（未登录时传 null）
+     * @param localDataUid 当前本地数据绑定的 UID（无数据时传 null）
      */
-    suspend fun importFromUri(uri: Uri): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun importFromUri(
+        uri: Uri,
+        authUid: String? = null,
+        localDataUid: String? = null
+    ): ImportResult = withContext(Dispatchers.IO) {
         try {
             val jsonString = context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 inputStream.bufferedReader().use { it.readText() }
@@ -64,7 +70,7 @@ class GachaDataImporter @Inject constructor(
                 return@withContext ImportResult(false, 0, 0, "", "无法读取文件")
             }
 
-            importFromString(jsonString)
+            importFromString(jsonString, authUid, localDataUid)
         } catch (e: Exception) {
             ImportResult(false, 0, 0, "", "读取文件异常: ${e.message}")
         }
@@ -72,8 +78,20 @@ class GachaDataImporter @Inject constructor(
 
     /**
      * 从 JSON 字符串导入抽卡记录
+     *
+     * UID 校验规则（校验在数据库写入之前）：
+     * 1. 已登录：UIGF UID 必须等于登录 UID
+     * 2. 未登录但有本地数据：UIGF UID 必须等于本地数据 UID
+     * 3. 未登录且无本地数据：建立本地数据 UID = UIGF UID
+     *
+     * @param authUid 已登录用户的 UID（未登录时传 null）
+     * @param localDataUid 当前本地数据绑定的 UID（无数据时传 null）
      */
-    suspend fun importFromString(jsonString: String): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun importFromString(
+        jsonString: String,
+        authUid: String? = null,
+        localDataUid: String? = null
+    ): ImportResult = withContext(Dispatchers.IO) {
         val errors = mutableListOf<String>()
 
         try {
@@ -131,6 +149,29 @@ class GachaDataImporter @Inject constructor(
             if (effectiveUid.isBlank()) {
                 return@withContext ImportResult(false, 0, 0, "", "无法确定 UID，请确认文件包含 UID 信息")
             }
+
+            // ===== UID 校验（在数据库写入之前） =====
+            // 1. 已登录：UIGF UID 必须等于登录 UID
+            if (!authUid.isNullOrBlank() && effectiveUid != authUid) {
+                return@withContext ImportResult(
+                    success = false,
+                    totalImported = 0,
+                    skipped = 0,
+                    uid = effectiveUid,
+                    message = "UID 不一致：当前账号 UID 为 $authUid，文件 UID 为 $effectiveUid，拒绝导入"
+                )
+            }
+            // 2. 未登录但有本地数据：UIGF UID 必须等于本地数据 UID
+            if (authUid.isNullOrBlank() && !localDataUid.isNullOrBlank() && effectiveUid != localDataUid) {
+                return@withContext ImportResult(
+                    success = false,
+                    totalImported = 0,
+                    skipped = 0,
+                    uid = effectiveUid,
+                    message = "UID 不一致：本地数据 UID 为 $localDataUid，文件 UID 为 $effectiveUid，拒绝导入"
+                )
+            }
+            // 3. 未登录且无本地数据：允许导入，建立本地数据 UID = UIGF UID
 
             // 查找或创建账号
             var account = gachaRepository.getAccountByUid(effectiveUid)

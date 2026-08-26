@@ -75,13 +75,21 @@ class SettingsViewModel @Inject constructor(
             val authUid = authRepository.getUid()
             val nickname = authRepository.getNickname()
 
-            // 解析活跃账号：登录时用登录UID，未登录时回退到最近导入的账号
+            // UID 显示优先级：
+            // 1. 已登录 → 直接使用登录 UID（不依赖 AccountEntity 是否存在）
+            // 2. 未登录但有本地数据 → 使用本地数据 UID
+            // 3. 未登录且无数据 → null
             val account = gachaRepository.getActiveAccount(authUid)
             val hasData = account != null
+            val displayUid = when {
+                loggedIn -> authUid  // 已登录：直接用登录 UID，不依赖是否有抽卡数据
+                hasData -> account?.uid  // 未登录：用本地数据 UID
+                else -> null
+            }
 
             _uiState.value = SettingsUiState(
                 isLoggedIn = loggedIn,
-                uid = account?.uid,
+                uid = displayUid,
                 nickname = nickname,
                 hasData = hasData
             )
@@ -107,7 +115,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _importMessage.value = "正在导入..."
             try {
-                val result = gachaDataImporter.importFromUri(uri)
+                // 获取当前登录 UID 和本地数据 UID，传给导入器做校验
+                val authUid = if (authRepository.isLoggedIn()) authRepository.getUid() else null
+                val localAccount = gachaRepository.getActiveAccount(authUid)
+                val localDataUid = localAccount?.uid
+
+                val result = gachaDataImporter.importFromUri(uri, authUid, localDataUid)
                 _importMessage.value = if (result.success) {
                     // 通知全局：数据已导入，其他页面刷新
                     sessionEventBus.emit(SessionEvent.DataImported)
@@ -175,15 +188,10 @@ class SettingsViewModel @Inject constructor(
 
     fun logout() {
         viewModelScope.launch {
-            val uid = authRepository.getUid()
-            val account = gachaRepository.getAccountByUid(uid ?: "")
-            if (account != null) {
-                gachaRepository.deleteAccount(account.id)
-            }
+            // 退出登录：只清除登录凭证，不删除本地抽卡数据和 AccountEntity
+            // 本地数据 UID 保留，用户可以用相同 UID 重新登录或继续使用本地数据
             authRepository.logout()
-            // logout 同时删除了账号与全部抽卡数据，需同时通知数据已清除
             sessionEventBus.emit(SessionEvent.LogoutCompleted)
-            sessionEventBus.emit(SessionEvent.DataCleared)
             loadSettings()
         }
     }

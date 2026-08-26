@@ -228,7 +228,7 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        text = "UID: ${uiState.uid ?: "未知"}",
+                        text = "UID: ${uiState.uid ?: "未绑定"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
@@ -756,7 +756,7 @@ private fun SyncSection(
                     color = MaterialTheme.colorScheme.onSecondaryContainer
                 )
                 Text(
-                    text = "UID: ${uiState.uid ?: "未知"}（手动导入）",
+                    text = "UID: ${uiState.uid ?: "未绑定"}（手动导入）",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                 )
