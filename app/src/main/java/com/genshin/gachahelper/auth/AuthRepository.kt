@@ -37,6 +37,8 @@ class AuthRepository @Inject constructor(
         // 缓存上次生成的 authkey（有有效期）
         val AUTH_KEY = stringPreferencesKey("auth_key")
         val AUTH_KEY_TIME = stringPreferencesKey("auth_key_time")
+        // AuthKey 绑定的 UID（防止 A UID 的 AuthKey 用到 B UID）
+        val AUTH_KEY_UID = stringPreferencesKey("auth_key_uid")
         // 稳定设备 ID（UUID v3，基于 ANDROID_ID）
         val DEVICE_ID = stringPreferencesKey("device_id")
         // 设备指纹缓存（device_fp，用于风控）
@@ -177,20 +179,54 @@ class AuthRepository @Inject constructor(
 
     /**
      * 缓存生成的 authkey（24 小时有效）
+     * 同时绑定 UID，防止 A UID 的 AuthKey 被用到 B UID
      */
     suspend fun cacheAuthKey(authkey: String) {
+        val uid = getUid() ?: ""
         context.authDataStore.edit { prefs ->
             prefs[Keys.AUTH_KEY] = authkey
             prefs[Keys.AUTH_KEY_TIME] = System.currentTimeMillis().toString()
+            prefs[Keys.AUTH_KEY_UID] = uid
         }
     }
 
     suspend fun getCachedAuthKeyIfFresh(): String? {
-        val key = getCachedAuthKey() ?: return null
-        val time = getCachedAuthKeyTime()
+        val prefs = context.authDataStore.data.first()
+        val key = prefs[Keys.AUTH_KEY] ?: return null
+        val time = prefs[Keys.AUTH_KEY_TIME]?.toLongOrNull() ?: 0L
+        val cachedUid = prefs[Keys.AUTH_KEY_UID] ?: ""
+        val currentUid = prefs[Keys.UID] ?: ""
+
+        // AuthKey 必须属于当前 UID
+        if (cachedUid.isNotBlank() && currentUid.isNotBlank() && cachedUid != currentUid) {
+            return null
+        }
+
         val ageMs = System.currentTimeMillis() - time
         // authkey 有效期约 24 小时，提前到 20 小时就刷新
         return if (ageMs < 20 * 60 * 60 * 1000) key else null
+    }
+
+    /**
+     * 清除缓存的 AuthKey（用于 -100 失效场景）
+     */
+    suspend fun clearAuthKey() {
+        context.authDataStore.edit { prefs ->
+            prefs.remove(Keys.AUTH_KEY)
+            prefs.remove(Keys.AUTH_KEY_TIME)
+            prefs.remove(Keys.AUTH_KEY_UID)
+        }
+    }
+
+    /**
+     * 校验缓存的 AuthKey 是否属于当前 UID，不匹配则清除
+     */
+    suspend fun validateAuthKeyForUid(currentUid: String) {
+        val prefs = context.authDataStore.data.first()
+        val cachedUid = prefs[Keys.AUTH_KEY_UID] ?: return
+        if (cachedUid.isNotBlank() && cachedUid != currentUid) {
+            clearAuthKey()
+        }
     }
 
     /**

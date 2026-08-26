@@ -740,6 +740,22 @@ private fun SyncSection(
                         }
                     }
                 }
+                is SyncState.RateLimited -> {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "访问过于频繁，请 ${sync.cooldownSeconds} 秒后重试",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        OutlinedButton(
+                            onClick = { viewModel.sync() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("我知道了")
+                        }
+                    }
+                }
             }
         }
     } else {

@@ -34,6 +34,14 @@ class GachaResponseParser @Inject constructor() {
             val retcode = json.get("retcode")?.asInt ?: 0
             val message = json.get("message")?.asString ?: ""
             if (retcode != 0) {
+                // -110: visit too frequently — 需要冷却退避，不能继续请求
+                if (retcode == -110) {
+                    return ParseResult.RateLimited
+                }
+                // -100: 登录状态失效 — AuthKey 可能过期，需要重新生成
+                if (retcode == -100) {
+                    return ParseResult.AuthKeyInvalid
+                }
                 return ParseResult.Error("接口返回错误: $message (code: $retcode)")
             }
 
@@ -98,5 +106,9 @@ class GachaResponseParser @Inject constructor() {
     sealed class ParseResult {
         data class Success(val records: List<GachaRecordEntity>, val hasMore: Boolean) : ParseResult()
         data class Error(val message: String) : ParseResult()
+        /** -110: visit too frequently — 需要冷却退避，不能继续请求 */
+        data object RateLimited : ParseResult()
+        /** -100: 登录状态失效 — AuthKey 可能过期，需要重新生成 */
+        data object AuthKeyInvalid : ParseResult()
     }
 }

@@ -118,6 +118,44 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-26 · v1.6.0 登录认证修复 + 同步限流处理（tag `v1.6.0`）
+
+**版本信息**
+
+- `versionCode = 19`，`versionName = "1.6.0"`
+- 修复验证码/密码登录无法获取 AuthKey 的问题
+- 修复 -110 visit too frequently 的无限循环问题
+
+**Bug 1：验证码/密码登录无法获取 AuthKey**
+
+- **根因**：`loginWithCookieTokenDirectly()` 中 stoken 兑换失败后仍继续走无 stoken 的 `buildCookieString()`，导致 genAuthKey 返回 -100
+- **修复**：stoken 兑换失败时直接终止流程并提示用户改用扫码登录，不再无 stoken 继续
+- **同时改进**：`getStokenByCookieToken()` 响应解析增加按 `name` 字段过滤（stoken/stoken_v2），不再盲目取 tokens 数组第一个元素
+- **影响文件**：`AuthViewModel.kt`、`MihoyoApiService.kt`
+
+**Bug 2：-110 visit too frequently 无限循环**
+
+- **根因**：`GachaResponseParser` 不区分 -110 和其他错误，每次同步都重新获取 AuthKey 并继续请求，形成 -110 → 刷新 AuthKey → 继续请求 → 再次 -110 的循环
+- **修复**：
+  - `GachaResponseParser` 新增 `RateLimited`（-110）和 `AuthKeyInvalid`（-100）两个独立 ParseResult
+  - `GachaSyncService` 遇到 -110 立即停止同步，进入 60 秒冷却期，不刷新 AuthKey
+  - 遇到 -100（AuthKey 失效）才清除缓存并重新生成 AuthKey，仅重试一次
+  - 分页请求间隔从 300ms 提升到 500ms，池间间隔 1 秒
+  - UI 新增 `RateLimited` 状态展示「访问过于频繁，请 XX 秒后重试」
+- **影响文件**：`GachaResponseParser.kt`、`GachaSyncService.kt`、`HomeScreen.kt`
+
+**Bug 3：AuthKey 没有绑定 UID**
+
+- **根因**：AuthKey 缓存只存了 authkey 和获取时间，没存所属 UID，切换账号时旧 AuthKey 可能被用到新账号
+- **修复**：`AuthRepository` 新增 `AUTH_KEY_UID` 字段，缓存 AuthKey 时同时保存当前 UID；`getCachedAuthKeyIfFresh()` 校验 UID 匹配；`validateAuthKeyForUid()` 在同步前校验
+- **影响文件**：`AuthRepository.kt`、`GachaSyncService.kt`
+
+**架构改进：AuthKey 获取与抽卡查询分离**
+
+- 阶段一：获取/复用 AuthKey（所有池共享同一个 AuthKey，不每池重新获取）
+- 阶段二：按池分页查询（复用阶段一的 AuthKey）
+- AuthKey 缓存 20 小时有效，优先复用，仅 -100 失效时才刷新
+
 ### 2026-08-26 · v1.5.2 修复统计结果传递链路问题（tag `v1.5.2`）
 
 **版本信息**

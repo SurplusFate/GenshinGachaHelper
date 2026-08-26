@@ -32,13 +32,19 @@ sealed class SyncState {
     ) : SyncState()
     data class Success(val totalNew: Int, val totalRecords: Int) : SyncState()
     data class Error(val message: String) : SyncState()
+    /** -110 限流：需要冷却，不能立即重试 */
+    data class RateLimited(val cooldownSeconds: Int) : SyncState()
 }
 
 /**
  * 抽卡同步服务
  * 负责编排整个同步流程：
- * 1. 通过 stoken 生成 authkey
- * 2. 按卡池分页请求 → 解析 → 去重写入
+ *
+ * 阶段一：获取/复用 AuthKey（所有池共享同一个 AuthKey）
+ * 阶段二：按卡池分页请求 → 解析 → 去重写入
+ *
+ * -110 处理：遇到 -110 立即停止同步，进入冷却期，不刷新 AuthKey
+ * -100 处理：AuthKey 可能过期，清除缓存并重新生成，仅重试一次
  */
 @Singleton
 class GachaSyncService @Inject constructor(
@@ -49,14 +55,38 @@ class GachaSyncService @Inject constructor(
     private val gachaRepository: GachaRepository,
     private val sessionEventBus: SessionEventBus
 ) {
+    companion object {
+        /** -110 冷却时间（秒） */
+        private const val RATE_LIMIT_COOLDOWN_SECONDS = 60
+        /** -110 后下次同步前的最小间隔（毫秒） */
+        private const val RATE_LIMIT_COOLDOWN_MS = RATE_LIMIT_COOLDOWN_SECONDS * 1000L
+        /** 分页请求间隔（毫秒）— 避免请求过快触发 -110 */
+        private const val PAGE_DELAY_MS = 500L
+        /** 池间间隔（毫秒） */
+        private const val POOL_DELAY_MS = 1000L
+    }
+
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
+    /** 上次 -110 发生的时间戳（毫秒） */
+    @Volatile
+    private var lastRateLimitedTime: Long = 0L
+
     /**
-     * 执行全量同步（角色池 + 武器池 + 常驻池）
+     * 执行全量同步（角色池 + 武器池 + 常驻池 + 新手池 + 集录池）
      */
     suspend fun syncAll() = withContext(Dispatchers.IO) {
         if (_syncState.value is SyncState.Loading || _syncState.value is SyncState.Progress) {
+            return@withContext
+        }
+
+        // ---- 冷却检查：如果刚遇到 -110，不能立即重试 ----
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastRateLimitedTime
+        if (lastRateLimitedTime > 0 && elapsed < RATE_LIMIT_COOLDOWN_MS) {
+            val remaining = ((RATE_LIMIT_COOLDOWN_MS - elapsed) / 1000).toInt().coerceAtLeast(1)
+            _syncState.value = SyncState.RateLimited(remaining)
             return@withContext
         }
 
@@ -83,18 +113,23 @@ class GachaSyncService @Inject constructor(
                 )
             }
 
-            // 2. 生成/获取 authkey（每次同步前确保 authkey 有效）
+            // ---- 阶段一：获取/复用 AuthKey ----
+            // AuthKey 优先复用缓存（20 小时有效），不每次重新获取
             _syncState.value = SyncState.Loading("获取授权凭证...")
+
+            // 清除可能过期的不匹配 UID 的 AuthKey
+            authRepository.validateAuthKeyForUid(uid)
 
             val authKey = when (val result = mihoyoApi.getValidAuthKey()) {
                 is ApiResult.Success -> result.data
                 is ApiResult.Error -> throw IllegalStateException("获取 authkey 失败: ${result.message}")
             }
 
-            // 3. 确保账号已存在
+            // 确保账号已存在
             val accountId = ensureAccount(uid, server, nickname)
 
-            // 4. 按卡池同步
+            // ---- 阶段二：按卡池分页查询 ----
+            // 所有池复用同一个 AuthKey，不重新获取
             val pools = listOf(
                 GachaType.CHARACTER,
                 GachaType.CHARACTER_2,
@@ -107,7 +142,9 @@ class GachaSyncService @Inject constructor(
             var totalNew = 0
             var totalRecords = 0
 
-            for (pool in pools) {
+            for ((index, pool) in pools.withIndex()) {
+                if (index > 0) delay(POOL_DELAY_MS)
+
                 _syncState.value = SyncState.Loading("正在同步${pool.displayName}...")
 
                 val result = syncPool(accountId, pool, authKey, uid, server)
@@ -125,9 +162,12 @@ class GachaSyncService @Inject constructor(
             gachaRepository.updateLastSyncTime(accountId, System.currentTimeMillis())
 
             _syncState.value = SyncState.Success(totalNew, totalRecords)
-            // 通知全局：同步完成，其他 ViewModel 通过事件总线刷新（替代旁路监听 syncState）
             sessionEventBus.emit(SessionEvent.DataSynced)
 
+        } catch (e: RateLimitedException) {
+            // -110：进入冷却，不刷新 AuthKey
+            lastRateLimitedTime = System.currentTimeMillis()
+            _syncState.value = SyncState.RateLimited(RATE_LIMIT_COOLDOWN_SECONDS)
         } catch (e: Exception) {
             _syncState.value = SyncState.Error(e.message ?: "同步失败")
         }
@@ -135,6 +175,8 @@ class GachaSyncService @Inject constructor(
 
     /**
      * 同步单个卡池
+     * 如果遇到 -110，抛出 RateLimitedException 由上层处理
+     * 如果遇到 -100（AuthKey 失效），清除缓存并重新获取 AuthKey，仅重试一次
      */
     private suspend fun syncPool(
         accountId: Long,
@@ -142,6 +184,17 @@ class GachaSyncService @Inject constructor(
         authKey: String,
         uid: String,
         server: String
+    ): PoolSyncResult {
+        return syncPoolInternal(accountId, pool, authKey, uid, server, isRetry = false)
+    }
+
+    private suspend fun syncPoolInternal(
+        accountId: Long,
+        pool: GachaType,
+        authKey: String,
+        uid: String,
+        server: String,
+        isRetry: Boolean
     ): PoolSyncResult {
         var page = 1
         var newCount = 0
@@ -176,9 +229,31 @@ class GachaSyncService @Inject constructor(
             )
 
             when (parseResult) {
+                is GachaResponseParser.ParseResult.RateLimited -> {
+                    // -110：立即停止，不继续请求
+                    throw RateLimitedException("访问过于频繁 (-110)")
+                }
+
+                is GachaResponseParser.ParseResult.AuthKeyInvalid -> {
+                    // -100：AuthKey 失效，清除缓存
+                    authRepository.clearAuthKey()
+                    if (!isRetry) {
+                        // 重新获取 AuthKey，仅重试当前池一次
+                        val newAuthKey = when (val result = mihoyoApi.getValidAuthKey()) {
+                            is ApiResult.Success -> result.data
+                            is ApiResult.Error -> throw IllegalStateException("authkey 重新获取失败: ${result.message}")
+                        }
+                        // 递归调用自身（带 isRetry=true），用新的 AuthKey 从当前页继续
+                        return syncPoolInternal(accountId, pool, newAuthKey, uid, server, isRetry = true)
+                    } else {
+                        throw IllegalStateException("AuthKey 失效且重试仍失败")
+                    }
+                }
+
                 is GachaResponseParser.ParseResult.Error -> {
                     throw Exception(parseResult.message)
                 }
+
                 is GachaResponseParser.ParseResult.Success -> {
                     val records = parseResult.records
                     totalCount += records.size
@@ -189,7 +264,6 @@ class GachaSyncService @Inject constructor(
                     }
 
                     // 增量判断：如果遇到 orderNumber <= 本地最大值，说明已同步过
-                    // 注意：orderNumber 是 String，必须转 Long 比较，否则字典序错误
                     if (maxOrderNumber != null && records.isNotEmpty()) {
                         val maxOrderLong = maxOrderNumber.toLongOrNull() ?: 0L
                         val existingRecords = records.filter {
@@ -218,8 +292,8 @@ class GachaSyncService @Inject constructor(
                 }
             }
 
-            // 避免请求过快（用 delay 而非 Thread.sleep，避免阻塞 IO 线程）
-            delay(300)
+            // 分页请求间隔，避免请求过快触发 -110
+            delay(PAGE_DELAY_MS)
         }
 
         return PoolSyncResult(newCount, totalCount)
@@ -270,6 +344,9 @@ class GachaSyncService @Inject constructor(
         val newCount: Int,
         val totalCount: Int
     )
+
+    /** -110 限流异常：用于区分普通错误和限流 */
+    private class RateLimitedException(message: String) : Exception(message)
 
     fun resetState() {
         _syncState.value = SyncState.Idle

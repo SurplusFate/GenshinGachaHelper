@@ -405,10 +405,31 @@ class MihoyoApiService @Inject constructor(
             val data = json.getAsJsonObject("data")
                 ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "getStokenByCookie")
 
-            // 通行证返回的可能是 "stoken" 或列表里的 tokens[].token
+            // 通行证返回结构可能有多层：
+            // 1. data.stoken 直接字段
+            // 2. data.tokens[] 数组（需按 name 过滤 stoken/stoken_v2，不能取第一个）
+            // 3. data.user_info.stoken / data.user_info.tokens
             val stoken = data.get("stoken")?.asString
-                ?: data.getAsJsonArray("tokens")?.firstOrNull()?.asJsonObject?.get("token")?.asString
-                ?: return@withContext ApiResult.Error("响应中未找到 stoken", -1, respBody, "getStokenByCookie")
+                ?: data.getAsJsonArray("tokens")?.let { arr ->
+                    arr.firstOrNull { item ->
+                        val name = item.asJsonObject?.get("name")?.asString ?: ""
+                        name == "stoken" || name == "stoken_v2"
+                    }?.asJsonObject?.get("token")?.asString
+                }
+                ?: data.getAsJsonObject("user_info")?.get("stoken")?.asString
+                ?: data.getAsJsonObject("user_info")?.getAsJsonArray("tokens")?.firstOrNull {
+                    val name = it.asJsonObject?.get("name")?.asString ?: ""
+                    name == "stoken" || name == "stoken_v2"
+                }?.asJsonObject?.get("token")?.asString
+
+            if (stoken.isNullOrBlank()) {
+                return@withContext ApiResult.Error("响应中未找到 stoken", -1, respBody, "getStokenByCookie")
+            }
+
+            // 顺便提取 mid（可能也在响应里）
+            val responseMid = data.get("mid")?.asString
+                ?: data.getAsJsonObject("user_info")?.get("mid")?.asString
+                ?: mid
 
             ApiResult.Success(stoken)
         } catch (e: Exception) {

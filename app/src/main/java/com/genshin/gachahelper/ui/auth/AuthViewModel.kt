@@ -475,9 +475,10 @@ class AuthViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            // 先用 cookie_token 换 stoken（genAuthKey 需要 stoken 才能通过，
-            // 否则后续同步会报 -100 登录状态失效）。失败不直接终止，
-            // 只作为 debugInfo 提示，后续看 genAuthKey 是否成功。
+            // 用 cookie_token 换 stoken：genAuthKey 需要包含 stoken 的 Cookie，
+            // 否则会返回 -100（登录状态失效）。
+            // 如果兑换失败，直接终止流程并提示用户改用扫码登录，
+            // 而不是继续走 buildCookieString（无 stoken → genAuthKey 必失败）。
             var swappedStoken: String? = null
             if (!cookieToken.isNullOrBlank()) {
                 setState { copy(statusText = "正在换取 stoken...") }
@@ -490,34 +491,32 @@ class AuthViewModel @Inject constructor(
                         }
                     }
                     is ApiResult.Error -> {
+                        // stoken 兑换失败 → genAuthKey 一定失败，不继续
                         setState {
-                            copy(debugInfo = (uiState.value.debugInfo
-                                ?: "") + "\nstoken 兑换失败：${r.message}" +
-                                "\n提示：若后续 generateAuthKey 报 -100，请改用扫码登录")
+                            copy(
+                                phase = AuthPhase.WEBVIEW_LOGIN,
+                                statusText = "",
+                                error = "无法获取 stoken 凭证（${r.message}）。\n" +
+                                    "genAuthKey 需要 stoken，请改用扫码登录。",
+                                debugInfo = (uiState.value.debugInfo ?: "") +
+                                    "\nstoken 兑换失败：${r.message}" +
+                                    "\n原始响应：${r.rawResponse.take(300)}" +
+                                    "\n\n提示：扫码登录可直接获取 stoken，推荐使用。"
+                            )
                         }
+                        return@launch
                     }
                 }
             }
 
-            // 保存凭证：优先使用已兑换到的 stoken（没有则保持 null）。
-            // saveWebViewCredentials 在 stoken 为 null 时不会覆盖已存的值，
-            // 所以这里用 saveLoginCredentials 显式写入（含 stoken → 和扫码登录产出同构）。
-            if (swappedStoken != null) {
-                authRepository.saveLoginCredentials(
-                    stoken = swappedStoken,
-                    ltuid = ltuid,
-                    mid = mid,
-                    cookieToken = cookieToken,
-                    ltoken = ltoken
-                )
-            } else {
-                authRepository.saveWebViewCredentials(
-                    ltuid = ltuid,
-                    mid = mid,
-                    cookieToken = cookieToken,
-                    ltoken = ltoken
-                )
-            }
+            // stoken 兑换成功 → 保存完整凭证（和扫码登录产出同构）
+            authRepository.saveLoginCredentials(
+                stoken = swappedStoken!!,
+                ltuid = ltuid,
+                mid = mid,
+                cookieToken = cookieToken,
+                ltoken = ltoken
+            )
 
             // 直接尝试获取游戏角色来验证凭证是否有效
             // getGameRoles 内部会调用 buildCookieString() 组装 cookie
