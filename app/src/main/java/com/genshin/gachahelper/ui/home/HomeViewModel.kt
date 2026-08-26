@@ -37,6 +37,9 @@ data class HomeUiState(
     val recentFiveStarIntervals: List<Int> = emptyList(),
     val overallLuckScore: Int = 0,
     val overallLuckConfidence: LuckConfidence = LuckConfidence.INSUFFICIENT,
+    val avgPullsPerFiveStar: Double = 0.0, // 全局平均出金（已完成间隔均值）
+    val bestLuck: Int = 0,  // 全局最欧
+    val worstLuck: Int = 0, // 全局最非
     val syncState: SyncState = SyncState.Idle,
     val isLoading: Boolean = true
 )
@@ -186,6 +189,18 @@ class HomeViewModel @Inject constructor(
             weightedScore.toInt().coerceIn(0, 100) to LuckConfidence.fromSampleCount(totalSamples)
         }
 
+        // 全局平均出金/最欧/最非：使用已完成间隔（角色池301+400合并后只取一份，避免重复）
+        val allIntervals = buildList {
+            charLuckStats?.let { addAll(it.fiveStarIntervals) }
+            weaponStats?.let { addAll(it.fiveStarIntervals) }
+            standardStats?.let { addAll(it.fiveStarIntervals) }
+            noviceStats?.let { addAll(it.fiveStarIntervals) }
+            chronicledStats?.let { addAll(it.fiveStarIntervals) }
+        }
+        val avgPullsPerFiveStar = if (allIntervals.isNotEmpty()) allIntervals.average() else 0.0
+        val bestLuck = allIntervals.minOrNull() ?: 0
+        val worstLuck = allIntervals.maxOrNull() ?: 0
+
         // 加载最近五星记录（最多 10 条），并计算每条五星距上一个五星的出金间隔
         val poolRecords = mapOf(
             GachaType.CHARACTER.value to characterRecords,
@@ -208,6 +223,9 @@ class HomeViewModel @Inject constructor(
             recentFiveStarIntervals = recentWithIntervals.map { it.second },
             overallLuckScore = overallLuckScore,
             overallLuckConfidence = overallLuckConfidence,
+            avgPullsPerFiveStar = avgPullsPerFiveStar,
+            bestLuck = bestLuck,
+            worstLuck = worstLuck,
             hasData = hasAnyData,
             isLoading = false
         )

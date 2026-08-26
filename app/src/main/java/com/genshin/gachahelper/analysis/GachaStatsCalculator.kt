@@ -262,8 +262,9 @@ class GachaStatsCalculator @Inject constructor() {
             if (chronicledStats != null) addAll(chronicledStats.fiveStarIntervals)
         }
 
-        val avgPulls = if (allFiveStars.isNotEmpty()) {
-            totalPulls.toDouble() / allFiveStars.size
+        // 平均出金：使用已完成的五星间隔均值（不含当前垫抽，更准确反映真实出金水平）
+        val avgPulls = if (allIntervals.isNotEmpty()) {
+            allIntervals.average()
         } else 0.0
 
         val bestLuck = allIntervals.minOrNull() ?: 0
