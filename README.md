@@ -118,6 +118,25 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-26 · v1.5.1 修复首页进度条全满 + 移除角色池拆分区块（tag `v1.5.1`）
+
+**版本信息**
+
+- `versionCode = 15`，`versionName = "1.5.1"`
+- 纯 UI 修复，不涉及任何统计/计算逻辑
+
+**Bug 1：保底进度条永远显示 100% 满**
+
+- **根因**：`PityProgressBar` 使用 `Surface` + `Box` + `fillMaxWidth(pityPercent)` 实现进度条，但 `Surface` 内部的约束传播导致 `fillMaxWidth(fraction)` 失效，`Box` 始终占满全宽
+- **修复**：改用 `BoxWithConstraints` 获取实际可用宽度 `maxWidth`，显式指定 `Modifier.width(maxWidth * pityPercent)`，确保进度条按比例填充
+- **影响文件**：`HomeScreen.kt` 的 `PityProgressBar` 函数
+
+**Bug 2：Hero 卡片中角色池拆分区块多余**
+
+- **问题**：首页 Hero 卡片底部自动展示了「角色池 / 角色池-2 / 共享保底垫抽」明细区块，信息冗余且与下方保底网格重复
+- **修复**：移除整个角色池拆分区块及配套的 `CharacterPoolBreakdownRow` 函数
+- **影响文件**：`HomeScreen.kt` 的 `HeroLuckCard` + `CharacterPoolBreakdownRow`
+
 ### 2026-08-25 · v1.5.0 抽卡统计计算引擎全面重构（tag `v1.5.0`）
 
 **版本信息**

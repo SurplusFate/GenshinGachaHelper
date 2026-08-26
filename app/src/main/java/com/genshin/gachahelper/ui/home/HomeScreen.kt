@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -283,59 +284,6 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                         modifier = Modifier.weight(1f)
                     )
                 }
-
-                // 角色池拆分（用户关心两个角色池各自抽了多少、合并垫抽进度）
-                // 只有当至少一个角色池有数据时才展示，无数据时保持 Hero 简洁
-                val c1 = uiState.characterStats
-                val c2 = uiState.character2Stats
-                if (c1 != null || c2 != null) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.07f)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            CharacterPoolBreakdownRow(
-                                label = "角色池",
-                                total = c1?.totalPulls ?: 0,
-                                fiveStars = c1?.fiveStarCount ?: 0
-                            )
-                            CharacterPoolBreakdownRow(
-                                label = "角色池-2",
-                                total = c2?.totalPulls ?: 0,
-                                fiveStars = c2?.fiveStarCount ?: 0
-                            )
-                            // 共享保底垫抽进度（取两个池任一非空共享垫抽，两池 currentPity 相同）
-                            val sharedPity = (c1?.currentPity ?: c2?.currentPity) ?: 0
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "共享保底垫抽",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                        .copy(alpha = 0.8f),
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "$sharedPity / ${c1?.pityCeiling ?: c2?.pityCeiling ?: 90}（距保底 ${(c1?.pityCeiling ?: c2?.pityCeiling ?: 90) - sharedPity} 抽）",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (sharedPity >= 60) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-                    }
-                }
             }
 
             // 右侧：运气环
@@ -517,17 +465,19 @@ private fun PityGridCard(
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
-            // 胶囊形进度条
-            Surface(
+            // 胶囊形进度条：使用 BoxWithConstraints 显式指定宽度，避免 Surface 内部
+            // 约束传播导致 fillMaxWidth(fraction) 失效（进度条永远显示 100%）
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
-                color = MaterialTheme.colorScheme.surfaceVariant
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(pityPercent)
+                        .width(maxWidth * pityPercent)
+                        .height(6.dp)
                         .clip(RoundedCornerShape(3.dp))
                         .background(progressColor)
                 )
@@ -831,47 +781,6 @@ private fun SectionHeader(title: String) {
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.onSurface
     )
-}
-
-/**
- * 角色池拆分明细行：展示单个角色活动池的总抽数 / 五星数
- */
-@Composable
-private fun CharacterPoolBreakdownRow(
-    label: String,
-    total: Int,
-    fiveStars: Int
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-        )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "$total 抽",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            Text(
-                text = "  ·  ",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.4f)
-            )
-            Text(
-                text = "五星 $fiveStars",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Medium,
-                color = FiveStarColor
-            )
-        }
-    }
 }
 
 // ============================ 运气评分计算 ============================
