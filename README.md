@@ -118,6 +118,79 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-26 · v1.5.3 合并v1.5.1/v1.5.2修复到运气分重构版本（tag `v1.5.3`）
+
+**版本信息**
+
+- `versionCode = 17`，`versionName = "1.5.3"`
+- 在 v1.5.0 运气分重构基础上，合并 v1.5.1 和 v1.5.2 的所有修复
+
+**修复内容（来自 v1.5.1）**
+
+1. **首页进度条全满修复**
+   - **根因**：`Surface` + `fillMaxWidth(fraction)` 在 Compose 中表现异常，进度条始终显示全满
+   - **修复**：改用 `BoxWithConstraints` + 显式 `width` 计算进度条宽度
+
+2. **移除角色池拆分区块**
+   - Hero 卡片中移除「角色池 / 角色池-2 / 共享保底垫抽」拆分明细区块
+   - 保持 Hero 卡片简洁，保底进度在下方网格卡片中展示
+   - 清理无用的 `CharacterPoolBreakdownRow` 函数
+
+**修复内容（来自 v1.5.2）**
+
+1. **平均出金计算修正**
+   - **根因**：`总抽数 / 总五星数` 包含当前垫抽（未完成的间隔），导致平均出金偏高
+   - **修复**：改用「已完成五星间隔的算术平均值」，更准确反映真实出金水平
+   - `generateReport` 和 `HomeViewModel` 同步修改
+
+2. **全局统计去重角色池共享间隔**
+   - **根因**：全局最欧/最非/平均出金计算时，角色池 301 和 400 各自的 `fiveStarIntervals` 是同一份共享数据，叠加会导致重复计入
+   - **修复**：全局统计只取一份角色池共享间隔（`characterStats ?: character2Stats`），与综合运气分计算逻辑一致
+
+3. **运气评分文案优化**
+   - 「理论百分位 XX%」改为「运气指数 XX」，更简洁易懂
+
+**架构调整**
+
+- `HomeUiState` 新增 `avgPullsPerFiveStar`/`bestLuck`/`worstLuck` 字段，全局统计在 ViewModel 层统一计算，UI 层直接使用
+- 消除 `HeroLuckCard` 和 `LuckDetailCard` 中重复的全局统计计算逻辑
+
+**影响文件**
+
+- 修改：`HomeScreen.kt`、`HomeViewModel.kt`、`GachaStatsCalculator.kt`、`app/build.gradle.kts`
+
+### 2026-08-26 · v1.5.2 修复统计结果传递链路问题（已被v1.5.3取代）
+
+**版本信息**
+
+- `versionCode = 16`，`versionName = "1.5.2"`
+- 基于 v1.4.4 代码线，修复统计结果在各页面间传递不一致的问题
+
+**说明**：v1.5.2 是在旧代码线（v1.4.x）上的修复，v1.5.3 已将这些修复合并到运气分重构版本（v1.5.0+）上。
+
+**修复内容**
+
+1. `calculateFiveStarIntervals` 未排序导致最近五星显示异常 → 增加 `sortByOrder`
+2. HomeScreen 重复计算平均出金 → 改用 `generateReport` 的已完成间隔均值
+3. `generateReport` 301/400 共享间隔被重复计入全局 → 只取一份角色池共享间隔
+4. 运气评分文案优化
+5. 新增测试用例验证修复
+
+### 2026-08-26 · v1.5.1 修复首页进度条全满 + 移除角色池拆分区块（已被v1.5.3取代）
+
+**版本信息**
+
+- `versionCode = 15`，`versionName = "1.5.1"`
+- 基于 v1.4.4 代码线的纯 UI 修复
+
+**说明**：v1.5.1 是在旧代码线（v1.4.x）上的修复，v1.5.3 已将这些修复合并到运气分重构版本（v1.5.0+）上。
+
+**修复内容**
+
+1. 进度条：`Surface+fillMaxWidth(fraction)` → `BoxWithConstraints+显式width`
+2. Hero 卡片：移除角色池/角色池-2/共享保底垫抽区块
+3. 清理无用的 `CharacterPoolBreakdownRow` 函数
+
 ### 2026-08-26 · v1.5.0 运气分系统重构（基于真实概率模型）（tag `v1.5.0`）
 
 **版本信息**
