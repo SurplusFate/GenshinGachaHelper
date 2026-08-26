@@ -73,6 +73,20 @@ class GachaStatsCalculator @Inject constructor() {
         // 过滤超过保底上限的不可能值（数据不完整时第一条间隔可能 > 90）
         val intervals = calculateFiveStarIntervals(intervalRecords, pityCeiling)
 
+        // ===== 运气评分（基于理论概率模型） =====
+        // 单次运气分：每个完整五星间隔对应一个评分
+        val singleLuckScores = intervals.map { interval ->
+            GachaProbabilityModel.calculateSingleLuckScore(interval, poolType)
+        }
+        // 总体运气分：所有单次运气分的算术平均
+        val luckScore = if (singleLuckScores.isNotEmpty()) {
+            singleLuckScores.average().toInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+        // 统计可信度：基于有效五星间隔数量
+        val luckConfidence = LuckConfidence.fromSampleCount(intervals.size)
+
         // 平均出金：共享保底池用合并记录计算（否则单池均值会超 90，误导用户）
         val mergedFiveStars = intervalRecords.filter { it.rarity == 5 }
         val avgPulls = if (mergedFiveStars.isNotEmpty()) {
@@ -117,7 +131,10 @@ class GachaStatsCalculator @Inject constructor() {
             maxPullsForFiveStar = maxPulls,
             fiveStarIntervals = intervals,
             upFiveStarCount = upFiveStars,
-            upRate = upRate
+            upRate = upRate,
+            luckScore = luckScore,
+            singleLuckScores = singleLuckScores,
+            luckConfidence = luckConfidence
         )
     }
 
@@ -259,6 +276,27 @@ class GachaStatsCalculator @Inject constructor() {
             totalUpFiveStars.toDouble() / totalCharFiveStars
         } else 0.0
 
+        // ===== 综合运气分 =====
+        // 角色池301和400共享保底且共享同一份间隔数据，只取一个池的运气分（避免重复）
+        val charLuckStats = characterStats ?: character2Stats
+        val poolStatsWithLuck = listOfNotNull(
+            charLuckStats,
+            weaponStats,
+            standardStats,
+            chronicledStats
+        ).filter { it.fiveStarIntervals.isNotEmpty() }
+
+        val (overallLuckScore, overallLuckConfidence) = if (poolStatsWithLuck.isEmpty()) {
+            0 to LuckConfidence.INSUFFICIENT
+        } else {
+            // 按有效样本数加权平均
+            val totalSamples = poolStatsWithLuck.sumOf { it.fiveStarIntervals.size }
+            val weightedScore = poolStatsWithLuck.sumOf {
+                it.luckScore * it.fiveStarIntervals.size
+            }.toDouble() / totalSamples
+            weightedScore.toInt().coerceIn(0, 100) to LuckConfidence.fromSampleCount(totalSamples)
+        }
+
         return GachaReport(
             totalPulls = totalPulls,
             totalFiveStars = allFiveStars.size,
@@ -271,7 +309,9 @@ class GachaStatsCalculator @Inject constructor() {
             weaponPoolStats = weaponStats,
             standardPoolStats = standardStats,
             novicePoolStats = noviceStats,
-            chronicledPoolStats = chronicledStats
+            chronicledPoolStats = chronicledStats,
+            overallLuckScore = overallLuckScore,
+            overallLuckConfidence = overallLuckConfidence
         )
     }
 }

@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import com.genshin.gachahelper.analysis.LuckConfidence
+import com.genshin.gachahelper.analysis.LuckVerdict
 import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
@@ -190,9 +192,10 @@ private fun HeroLuckCard(uiState: HomeUiState) {
             (uiState.character2Stats?.fiveStarCount ?: 0)
     val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
 
-    // 运气评分
-    val luckScore = calculateLuckScore(avgPulls, totalFiveStars)
-    val luckVerdict = luckVerdictText(luckScore)
+    // 运气评分（来自ViewModel，基于概率模型计算）
+    val luckScore = uiState.overallLuckScore
+    val luckVerdict = LuckVerdict.fromScore(luckScore)
+    val hasLuckData = uiState.overallLuckConfidence != LuckConfidence.INSUFFICIENT || luckScore > 0
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -345,15 +348,20 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                 LuckRing(score = luckScore)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = luckVerdict,
+                    text = if (hasLuckData) luckVerdict else "暂无数据",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
-                    text = "高于 $luckScore% 旅行者",
+                    text = "理论百分位 ${luckScore}%",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                )
+                Text(
+                    text = "可信度：${uiState.overallLuckConfidence.displayName}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
                 )
             }
         }
@@ -872,22 +880,4 @@ private fun CharacterPoolBreakdownRow(
             )
         }
     }
-}
-
-// ============================ 运气评分计算 ============================
-
-/**
- * 运气评分：基于平均出金抽数，avg=10→100分, avg=90→0分
- */
-private fun calculateLuckScore(avgPulls: Double, totalFiveStars: Int): Int {
-    if (totalFiveStars == 0 || avgPulls <= 0) return 0
-    return ((90.0 - avgPulls) / 80.0 * 100).coerceIn(0.0, 100.0).toInt()
-}
-
-private fun luckVerdictText(score: Int): String = when {
-    score >= 80 -> "运气爆棚"
-    score >= 65 -> "运气还不错"
-    score >= 50 -> "运气一般般"
-    score >= 35 -> "运气有点差"
-    else -> "是非酋本酋"
 }

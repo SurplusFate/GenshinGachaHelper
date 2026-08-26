@@ -77,6 +77,9 @@ accompanist-webview = { group = "com.google.accompanist", name = "accompanist-we
 # QR Code
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
+# Testing
+junit = { group = "junit", name = "junit", version = "4.13.2" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

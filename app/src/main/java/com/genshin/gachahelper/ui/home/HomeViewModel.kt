@@ -3,6 +3,7 @@ package com.genshin.gachahelper.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.analysis.GachaStatsCalculator
+import com.genshin.gachahelper.analysis.LuckConfidence
 import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.core.SessionEvent
@@ -34,6 +35,8 @@ data class HomeUiState(
     val chronicledStats: PoolStats? = null,
     val recentFiveStars: List<GachaRecordEntity> = emptyList(),
     val recentFiveStarIntervals: List<Int> = emptyList(),
+    val overallLuckScore: Int = 0,
+    val overallLuckConfidence: LuckConfidence = LuckConfidence.INSUFFICIENT,
     val syncState: SyncState = SyncState.Idle,
     val isLoading: Boolean = true
 )
@@ -164,6 +167,25 @@ class HomeViewModel @Inject constructor(
                 weaponStats != null || standardStats != null ||
                 noviceStats != null || chronicledStats != null
 
+        // 综合运气分：角色池301和400共享保底，只取一个避免重复
+        val charLuckStats = characterStats ?: character2Stats
+        val poolStatsWithLuck = listOfNotNull(
+            charLuckStats,
+            weaponStats,
+            standardStats,
+            chronicledStats
+        ).filter { it.fiveStarIntervals.isNotEmpty() }
+
+        val (overallLuckScore, overallLuckConfidence) = if (poolStatsWithLuck.isEmpty()) {
+            0 to LuckConfidence.INSUFFICIENT
+        } else {
+            val totalSamples = poolStatsWithLuck.sumOf { it.fiveStarIntervals.size }
+            val weightedScore = poolStatsWithLuck.sumOf {
+                it.luckScore * it.fiveStarIntervals.size
+            }.toDouble() / totalSamples
+            weightedScore.toInt().coerceIn(0, 100) to LuckConfidence.fromSampleCount(totalSamples)
+        }
+
         // 加载最近五星记录（最多 10 条），并计算每条五星距上一个五星的出金间隔
         val poolRecords = mapOf(
             GachaType.CHARACTER.value to characterRecords,
@@ -184,6 +206,8 @@ class HomeViewModel @Inject constructor(
             chronicledStats = chronicledStats,
             recentFiveStars = recentWithIntervals.map { it.first },
             recentFiveStarIntervals = recentWithIntervals.map { it.second },
+            overallLuckScore = overallLuckScore,
+            overallLuckConfidence = overallLuckConfidence,
             hasData = hasAnyData,
             isLoading = false
         )

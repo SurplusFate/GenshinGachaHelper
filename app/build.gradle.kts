@@ -23,8 +23,8 @@ android {
         applicationId = "com.genshin.gachahelper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 13
-        versionName = "1.4.4"
+        versionCode = 14
+        versionName = "1.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -123,4 +123,7 @@ dependencies {
 
     // QR Code
     implementation(libs.zxing.core)
+
+    // Testing
+    testImplementation(libs.junit)
 }
