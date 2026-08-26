@@ -182,7 +182,8 @@ private fun HeroLuckCard(uiState: HomeUiState) {
     )
     val totalPulls = stats.sumOf { it.totalPulls }
     val totalFiveStars = stats.sumOf { it.fiveStarCount }
-    val avgPulls = if (totalFiveStars > 0) totalPulls.toDouble() / totalFiveStars else 0.0
+    // 使用计算引擎生成的全局报告平均值，禁止在 UI 层用 totalPulls / totalFiveStars
+    val avgPulls = uiState.report?.avgPullsPerFiveStar ?: 0.0
 
     // UP 率：仅角色池（301 + 400）统计
     val upFiveStars = (uiState.characterStats?.upFiveStarCount ?: 0) +
@@ -191,7 +192,7 @@ private fun HeroLuckCard(uiState: HomeUiState) {
             (uiState.character2Stats?.fiveStarCount ?: 0)
     val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
 
-    // 运气评分
+    // 运气评分：基于计算引擎的平均出金
     val luckScore = calculateLuckScore(avgPulls, totalFiveStars)
     val luckVerdict = luckVerdictText(luckScore)
 
@@ -299,7 +300,7 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
-                    text = "高于 $luckScore% 旅行者",
+                    text = "运气指数 $luckScore",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                 )
@@ -618,7 +619,8 @@ private fun LuckDetailCard(uiState: HomeUiState) {
     val statsWithFiveStars = stats.filter { it.fiveStarCount > 0 }
     val totalPulls = stats.sumOf { it.totalPulls }
     val totalFiveStars = stats.sumOf { it.fiveStarCount }
-    val avgPulls = if (totalFiveStars > 0) totalPulls.toDouble() / totalFiveStars else 0.0
+    // 使用计算引擎生成的全局报告平均值，禁止在 UI 层用 totalPulls / totalFiveStars
+    val avgPulls = uiState.report?.avgPullsPerFiveStar ?: 0.0
     val worstLuck = statsWithFiveStars.maxOfOrNull { it.maxPullsForFiveStar } ?: 0
     val bestLuck = statsWithFiveStars.minOfOrNull { it.minPullsForFiveStar } ?: 0
     val recentInterval = uiState.recentFiveStarIntervals.firstOrNull() ?: 0

@@ -136,16 +136,30 @@ class GachaStatsCalculator @Inject constructor() {
         } else null
 
         // ---- 全局汇总 ----
-        val allPoolStats = listOfNotNull(
-            characterStats, character2Stats, weaponStats,
-            standardStats, noviceStats, chronicledStats
-        )
+        // 注意：角色池 301 和 400 共享五星间隔（两池的 fiveStar.intervals 内容相同），
+        // 全局间隔只需取一份，不能两份都 flatMap 进去，否则间隔翻倍。
+        // 角色池共享间隔单独取一份
+        val charSharedIntervals = (characterStats ?: character2Stats)?.fiveStar?.intervals ?: emptyList()
 
-        val totalPulls = allPoolStats.sumOf { it.basic.totalPulls }
-        val totalFiveStars = allPoolStats.sumOf { it.basic.fiveStarCount }
+        val totalPulls = (characterStats?.basic?.totalPulls ?: 0) +
+                (character2Stats?.basic?.totalPulls ?: 0) +
+                (weaponStats?.basic?.totalPulls ?: 0) +
+                (standardStats?.basic?.totalPulls ?: 0) +
+                (noviceStats?.basic?.totalPulls ?: 0) +
+                (chronicledStats?.basic?.totalPulls ?: 0)
+        val totalFiveStars = (characterStats?.basic?.fiveStarCount ?: 0) +
+                (character2Stats?.basic?.fiveStarCount ?: 0) +
+                (weaponStats?.basic?.fiveStarCount ?: 0) +
+                (standardStats?.basic?.fiveStarCount ?: 0) +
+                (noviceStats?.basic?.fiveStarCount ?: 0) +
+                (chronicledStats?.basic?.fiveStarCount ?: 0)
 
-        // 全局平均出金：所有池的已完成间隔合并后取平均
-        val allIntervals = allPoolStats.flatMap { it.fiveStar.intervals }
+        // 全局平均出金：角色共享间隔（一份） + 其他池各自间隔
+        val allIntervals = charSharedIntervals +
+                (weaponStats?.fiveStar?.intervals ?: emptyList()) +
+                (standardStats?.fiveStar?.intervals ?: emptyList()) +
+                (noviceStats?.fiveStar?.intervals ?: emptyList()) +
+                (chronicledStats?.fiveStar?.intervals ?: emptyList())
         val avgPulls = if (allIntervals.isNotEmpty()) {
             allIntervals.average()
         } else 0.0
@@ -435,7 +449,8 @@ class GachaStatsCalculator @Inject constructor() {
      */
     fun calculateFiveStarIntervals(records: List<GachaRecordEntity>): List<Int> {
         if (records.isEmpty()) return emptyList()
-        return calculateFiveStarStats(records).intervals
+        // 必须先按 orderNumber 升序排列，否则间隔计算和映射会错位
+        return calculateFiveStarStats(sortByOrder(records)).intervals
     }
 
     /**

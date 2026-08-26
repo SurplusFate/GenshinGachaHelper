@@ -45,7 +45,7 @@ class GachaStatsCalculatorTest {
         time: String = "2024-01-01 00:00:00"
     ): GachaRecordEntity {
         return GachaRecordEntity(
-            id = 0,
+            id = orderNumber, // 用 orderNumber 作为唯一 id，保证映射测试可用
             accountId = 1,
             poolType = poolType,
             itemName = itemName,
@@ -650,5 +650,193 @@ class GachaStatsCalculatorTest {
 
         // 垫抽：510 - 503 = 7
         assertEquals(7, result.pity.currentPity)
+    }
+
+    // ==================== 测试A：calculateFiveStarIntervals 必须排序 ====================
+
+    /**
+     * 测试 calculateFiveStarIntervals 在传入 DESC 序记录时仍能正确计算间隔。
+     *
+     * 场景：迪希雅（第50抽）→ 哥伦比娅（第59抽），间隔应为 9。
+     * DAO 返回 DESC 序，如果不排序，间隔和映射会错位。
+     */
+    @Test
+    fun `calculateFiveStarIntervals 传入DESC序记录仍正确计算间隔`() {
+        val records = buildRecords(
+            count = 60,
+            fiveStarPulls = listOf(50, 59),
+            nameByPull = mapOf(50 to "迪希雅", 59 to "哥伦比娅")
+        )
+        // 模拟 DAO 返回的 DESC 序
+        val descRecords = records.sortedByDescending { it.orderNumber }
+
+        val intervals = calculator.calculateFiveStarIntervals(descRecords)
+        // 第一个五星（迪希雅）间隔 = 50，第二个五星（哥伦比娅）间隔 = 59-50 = 9
+        assertEquals(listOf(50, 9), intervals)
+    }
+
+    // ==================== 测试B：五星ID与interval映射不依赖列表顺序 ====================
+
+    /**
+     * 测试五星 ID → interval 映射不依赖列表顺序。
+     *
+     * 构造三个五星 A(第10抽) B(第20抽) C(第30抽)。
+     * 即使 UI 把显示顺序打乱为 C B A，
+     * 每个五星的 interval 仍然正确映射到自己的 id。
+     */
+    @Test
+    fun `五星ID与interval映射不依赖UI显示顺序`() {
+        val records = buildRecords(
+            count = 30,
+            fiveStarPulls = listOf(10, 20, 30),
+            nameByPull = mapOf(10 to "A", 20 to "B", 30 to "C")
+        )
+
+        val intervals = calculator.calculateFiveStarIntervals(records)
+        val fiveStarsInOrder = records
+            .filter { it.rarity == 5 }
+            .sortedBy { it.orderNumber }
+
+        // 建立映射：id → interval
+        val intervalById = mutableMapOf<Long, Int>()
+        for (i in fiveStarsInOrder.indices) {
+            if (i < intervals.size) {
+                intervalById[fiveStarsInOrder[i].id] = intervals[i]
+            }
+        }
+
+        // 间隔：A=10, B=20-10=10, C=30-20=10
+        assertEquals(listOf(10, 10, 10), intervals)
+
+        // 即使 UI 用乱序排列 C B A，每个五星仍然映射到自己的 interval
+        val uiDisplayOrder = fiveStarsInOrder.reversed() // C, B, A
+        assertEquals(10, intervalById[uiDisplayOrder[0].id]) // C → 10
+        assertEquals(10, intervalById[uiDisplayOrder[1].id]) // B → 10
+        assertEquals(10, intervalById[uiDisplayOrder[2].id]) // A → 10
+
+        // 改变间隔使之更明显
+        val records2 = buildRecords(
+            count = 80,
+            fiveStarPulls = listOf(10, 50, 80),
+            nameByPull = mapOf(10 to "A", 50 to "B", 80 to "C")
+        )
+        val intervals2 = calculator.calculateFiveStarIntervals(records2)
+        val fiveStars2 = records2.filter { it.rarity == 5 }.sortedBy { it.orderNumber }
+        val map2 = mutableMapOf<Long, Int>()
+        for (i in fiveStars2.indices) {
+            if (i < intervals2.size) map2[fiveStars2[i].id] = intervals2[i]
+        }
+        // A=10, B=50-10=40, C=80-50=30
+        assertEquals(listOf(10, 40, 30), intervals2)
+        // 乱序 C A B → 30, 10, 40
+        val shuffled = listOf(fiveStars2[2], fiveStars2[0], fiveStars2[1])
+        assertEquals(30, map2[shuffled[0].id])
+        assertEquals(10, map2[shuffled[1].id])
+        assertEquals(40, map2[shuffled[2].id])
+    }
+
+    // ==================== 测试C：首页平均出金不能用总抽数÷五星数量 ====================
+
+    /**
+     * 测试 generateReport 的平均出金 = 已完成间隔的平均值，
+     * 而不是 totalPulls / totalFiveStars。
+     *
+     * 场景：角色池 50抽2金（间隔 10, 40），武器池 80抽1金（间隔 80）
+     * 已完成间隔 = [10, 40, 80]，平均 = 130/3 ≈ 43.33
+     * 错误算法 = (50+80) / (2+1) = 130/3 ≈ 43.33 （巧合相同）
+     *
+     * 更好的场景：角色池 100抽2金（间隔10, 10），之后80抽无金
+     * 已完成间隔 = [10, 10]，平均 = 10
+     * 错误算法 = 100 / 2 = 50
+     */
+    @Test
+    fun `generateReport 平均出金等于已完成间隔均值而非总抽数除五星数`() {
+        val charRecords = buildRecords(count = 100, fiveStarPulls = listOf(10, 20))
+        val weaponRecords = buildRecords(
+            count = 80, fiveStarPulls = listOf(80),
+            poolType = GachaType.WEAPON.value, startOrder = 2000000000000000000L
+        )
+        val standardRecords = emptyList<GachaRecordEntity>()
+
+        val report = calculator.generateReport(
+            characterRecords = charRecords,
+            character2Records = emptyList(),
+            weaponRecords = weaponRecords,
+            standardRecords = standardRecords
+        )
+
+        // 已完成间隔：角色池 [10, 10]，武器池 [80]
+        // 平均 = (10 + 10 + 80) / 3 = 100 / 3 ≈ 33.33
+        assertEquals(33.33, report.avgPullsPerFiveStar, 0.1)
+
+        // 错误算法：180 / 3 = 60，验证确实不同
+        assertNotEquals(60.0, report.avgPullsPerFiveStar, 0.1)
+    }
+
+    // ==================== 测试D：301/400 不重复统计全局间隔 ====================
+
+    /**
+     * 测试 generateReport 中 301/400 共享间隔不被重复计入全局统计。
+     *
+     * 场景：301 有 2 个五星间隔 [10, 50]，400 有 2 个五星间隔 [30, 60]
+     * 因为 301/400 共享保底，四者合并后的间隔应为 [10, 30+X, 50+Y, 60+Z] 等
+     *
+     * 简化场景：
+     * 301：第10抽五星A
+     * 400：第40抽五星B（合并后距A = 30）
+     * 301：第70抽五星C（合并后距B = 30）
+     *
+     * 正确全局间隔 = [10, 30, 30]，共3个，平均 = 70/3 ≈ 23.33
+     * 错误（重复统计）= 6个间隔（301的3个 + 400的3个），平均会不同
+     */
+    @Test
+    fun `generateReport 中301和400共享间隔不重复计入全局`() {
+        // 301 记录：第10抽五星A，第69抽五星C（最后一抽）
+        val records301 = buildRecords(
+            count = 69,
+            fiveStarPulls = listOf(10, 69),
+            poolType = GachaType.CHARACTER.value,
+            startOrder = 1000000000000000000L,
+            nameByPull = mapOf(10 to "A", 69 to "C")
+        )
+        // 400 记录：只有1抽五星B，orderNumber 落在 301 的 A 和 C 之间
+        val records400 = buildRecords(
+            count = 1,
+            fiveStarPulls = listOf(1),
+            poolType = GachaType.CHARACTER_2.value,
+            startOrder = 1000000000000000039L, // orderNumber = ...040
+            nameByPull = mapOf(1 to "B")
+        )
+        // 武器池：1个五星间隔 = 30
+        val weaponRecords = buildRecords(
+            count = 30,
+            fiveStarPulls = listOf(30),
+            poolType = GachaType.WEAPON.value,
+            startOrder = 2000000000000000000L
+        )
+
+        val report = calculator.generateReport(
+            characterRecords = records301,
+            character2Records = records400,
+            weaponRecords = weaponRecords,
+            standardRecords = emptyList()
+        )
+
+        // 合并后按 orderNumber 排序：
+        // 001-009(301), 010(A), 011-039(301), 040(B), 041-069(C)
+        // 位置：A=10, B=40, C=70
+        // 间隔：A=10, B=40-10=30, C=70-40=30
+        // 角色池共享间隔（一份）：[10, 30, 30]
+        // 武器池间隔：[30]
+        // 全局间隔 = [10, 30, 30, 30]，共4个
+
+        // 正确平均 = (10 + 30 + 30 + 30) / 4 = 100 / 4 = 25.0
+        assertEquals(25.0, report.avgPullsPerFiveStar, 0.1)
+
+        // 五星总数仍然独立计数：301有2个 + 400有1个 + 武器1个 = 4
+        assertEquals(4, report.totalFiveStars)
+
+        // 总抽数独立计数：69 + 1 + 30 = 100
+        assertEquals(100, report.totalPulls)
     }
 }

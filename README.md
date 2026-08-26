@@ -118,6 +118,44 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-26 · v1.5.2 修复统计结果传递链路问题（tag `v1.5.2`）
+
+**版本信息**
+
+- `versionCode = 16`，`versionName = "1.5.2"`
+- 修复统计结果从计算引擎到 UI 的传递链路问题，不修改已验证正确的核心计算逻辑
+
+**Bug 1：最近五星显示 184 而非 9**
+
+- **根因**：`calculateFiveStarIntervals()` 接收 DAO 返回的 DESC 序记录后未排序，直接传入 `calculateFiveStarStats()`，导致间隔计算和 `五星id → interval` 映射错位
+- **修复**：`calculateFiveStarIntervals()` 内部增加 `sortByOrder()` 调用，确保无论输入顺序如何，间隔都按 orderNumber 升序正确计算
+- **影响文件**：`GachaStatsCalculator.kt` 的 `calculateFiveStarIntervals` 方法
+
+**Bug 2：首页平均出金显示 57.3 而非 56.1**
+
+- **根因**：`HomeScreen` 的 `HeroLuckCard` 和 `LuckDetailCard` 自行计算 `totalPulls / totalFiveStars`，而不是使用计算引擎的 `已完成五星间隔平均值`
+- **修复**：HomeViewModel 调用 `generateReport()` 生成全局报告，UI 层直接使用 `report.avgPullsPerFiveStar`，禁止在 UI 层重新计算
+- **影响文件**：`HomeViewModel.kt`（新增 `report` 字段）、`HomeScreen.kt`（两处 `avgPulls` 改为引用 `uiState.report`）
+
+**Bug 3：generateReport 301/400 共享间隔被重复计入全局**
+
+- **根因**：`generateReport()` 的 `allPoolStats.flatMap { it.fiveStar.intervals }` 同时收集 `characterStats` 和 `character2Stats` 的间隔，而两者因共享保底内容相同，导致全局间隔翻倍
+- **修复**：全局间隔只取角色池一份共享间隔 + 其他池各自间隔，不再把 301 和 400 的共享间隔各算一遍
+- **影响文件**：`GachaStatsCalculator.kt` 的 `generateReport` 方法
+
+**Bug 4：运气评分文案误导**
+
+- **问题**：「高于 XX% 旅行者」把 `luckScore` 冒充真实玩家百分位，但项目没有玩家样本数据库
+- **修复**：改为显示「运气指数 XX」
+- **影响文件**：`HomeScreen.kt` 的 `HeroLuckCard`
+
+**新增测试**
+
+- `calculateFiveStarIntervals 传入DESC序记录仍正确计算间隔`：验证排序修复
+- `五星ID与interval映射不依赖UI显示顺序`：验证映射不依赖列表顺序
+- `generateReport 平均出金等于已完成间隔均值而非总抽数除五星数`：验证平均出金公式
+- `generateReport 中301和400共享间隔不重复计入全局`：验证不重复统计
+
 ### 2026-08-26 · v1.5.1 修复首页进度条全满 + 移除角色池拆分区块（tag `v1.5.1`）
 
 **版本信息**
