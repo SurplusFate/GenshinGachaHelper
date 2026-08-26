@@ -76,7 +76,7 @@ class GachaStatsCalculator @Inject constructor() {
             upItems = upItems
         )
 
-        val fiveStar = calculateFiveStarStats(mergedForShared)
+        val fiveStar = calculateFiveStarStats(mergedForShared, poolType)
 
         // ---- 3. UP 统计（独立计数） ----
         val up = calculateUpStats(sortedRecords, upItems)
@@ -176,6 +176,27 @@ class GachaStatsCalculator @Inject constructor() {
             totalUpFiveStars.toDouble() / totalCharFiveStars
         } else 0.0
 
+        // ===== 综合运气分 =====
+        // 角色池 301/400 共享间隔（两池 fiveStar 内容相同），只取一份避免重复
+        val charLuckStats = characterStats ?: character2Stats
+        val poolStatsWithLuck = listOfNotNull(
+            charLuckStats,
+            weaponStats,
+            standardStats,
+            chronicledStats
+        ).filter { it.fiveStar.intervals.isNotEmpty() }
+
+        val (overallLuckScore, overallLuckConfidence) = if (poolStatsWithLuck.isEmpty()) {
+            0 to LuckConfidence.INSUFFICIENT
+        } else {
+            // 按有效样本数加权平均
+            val totalSamples = poolStatsWithLuck.sumOf { it.fiveStar.intervals.size }
+            val weightedScore = poolStatsWithLuck.sumOf {
+                it.fiveStar.luckScore * it.fiveStar.intervals.size
+            }.toDouble() / totalSamples
+            weightedScore.toInt().coerceIn(0, 100) to LuckConfidence.fromSampleCount(totalSamples)
+        }
+
         return GachaReport(
             totalPulls = totalPulls,
             totalFiveStars = totalFiveStars,
@@ -183,6 +204,8 @@ class GachaStatsCalculator @Inject constructor() {
             bestLuck = bestLuck,
             worstLuck = worstLuck,
             upSuccessRate = upRate,
+            overallLuckScore = overallLuckScore,
+            overallLuckConfidence = overallLuckConfidence,
             characterPoolStats = characterStats,
             character2PoolStats = character2Stats,
             weaponPoolStats = weaponStats,
@@ -301,11 +324,13 @@ class GachaStatsCalculator @Inject constructor() {
      *
      * 平均出金 = 已完成间隔之和 ÷ 间隔数量
      * 当前垫抽不计入平均（因为还没出金，不是完整间隔）。
+     * 运气分基于真实概率模型计算。
      *
      * 输入：按 orderNumber 升序排列的记录。
      */
     private fun calculateFiveStarStats(
-        records: List<GachaRecordEntity>
+        records: List<GachaRecordEntity>,
+        poolType: Int = GachaType.CHARACTER.value
     ): FiveStarStats {
         if (records.isEmpty()) {
             return FiveStarStats.EMPTY
@@ -336,11 +361,25 @@ class GachaStatsCalculator @Inject constructor() {
         val min = intervals.minOrNull() ?: 0
         val max = intervals.maxOrNull() ?: 0
 
+        // ===== 运气评分（基于理论概率模型） =====
+        val singleLuckScores = intervals.map { interval ->
+            GachaProbabilityModel.calculateSingleLuckScore(interval, poolType)
+        }
+        val luckScore = if (singleLuckScores.isNotEmpty()) {
+            singleLuckScores.average().toInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+        val luckConfidence = LuckConfidence.fromSampleCount(intervals.size)
+
         return FiveStarStats(
             intervals = intervals,
             avgPullsPerFiveStar = avg,
             minPulls = min,
-            maxPulls = max
+            maxPulls = max,
+            luckScore = luckScore,
+            singleLuckScores = singleLuckScores,
+            luckConfidence = luckConfidence
         )
     }
 

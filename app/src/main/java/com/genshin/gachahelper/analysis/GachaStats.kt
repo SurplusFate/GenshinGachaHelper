@@ -48,6 +48,7 @@ data class PityStats(
  * - 平均出金 = 已完成五星间隔之和 ÷ 间隔数量
  * - 当前垫抽不算入平均出金（因为还没出金，不是一个完整间隔）
  * - 最欧/最非只在已完成间隔中取极值
+ * - 运气分基于真实概率模型计算
  */
 data class FiveStarStats(
     /** 已完成的五星间隔列表（从最早到最近） */
@@ -57,15 +58,52 @@ data class FiveStarStats(
     /** 最欧（最小间隔），无五星时为 0 */
     val minPulls: Int,
     /** 最非（最大间隔），无五星时为 0 */
-    val maxPulls: Int
+    val maxPulls: Int,
+    /** 总体运气分（0~100），无五星时为 0 */
+    val luckScore: Int,
+    /** 每次出金的单次运气分列表（与 intervals 一一对应） */
+    val singleLuckScores: List<Int>,
+    /** 统计可信度 */
+    val luckConfidence: LuckConfidence
 ) {
     companion object {
         val EMPTY = FiveStarStats(
             intervals = emptyList(),
             avgPullsPerFiveStar = 0.0,
             minPulls = 0,
-            maxPulls = 0
+            maxPulls = 0,
+            luckScore = 0,
+            singleLuckScores = emptyList(),
+            luckConfidence = LuckConfidence.INSUFFICIENT
         )
+    }
+}
+
+/**
+ * 统计可信度等级
+ *
+ * 根据有效五星间隔数量判定：
+ * - 1~3 次：数据较少
+ * - 4~9 次：参考
+ * - 10~19 次：较可靠
+ * - 20 次及以上：可靠
+ */
+enum class LuckConfidence(val displayName: String, val order: Int) {
+    INSUFFICIENT("数据较少", 0),
+    LOW("参考", 1),
+    MEDIUM("较可靠", 2),
+    HIGH("可靠", 3);
+
+    companion object {
+        fun fromSampleCount(count: Int): LuckConfidence {
+            return when {
+                count <= 0 -> INSUFFICIENT
+                count <= 3 -> INSUFFICIENT
+                count <= 9 -> LOW
+                count <= 19 -> MEDIUM
+                else -> HIGH
+            }
+        }
     }
 }
 
@@ -135,6 +173,9 @@ data class PoolStats(
     val fiveStarIntervals: List<Int> get() = fiveStar.intervals
     val upFiveStarCount: Int get() = up.upFiveStarCount
     val upRate: Double get() = up.upRate
+    val luckScore: Int get() = fiveStar.luckScore
+    val singleLuckScores: List<Int> get() = fiveStar.singleLuckScores
+    val luckConfidence: LuckConfidence get() = fiveStar.luckConfidence
 }
 
 /**
@@ -155,6 +196,10 @@ data class GachaReport(
     val worstLuck: Int,
     /** 全局 UP 成功率（仅角色池） */
     val upSuccessRate: Double,
+    /** 综合运气分（0~100） */
+    val overallLuckScore: Int,
+    /** 综合运气可信度 */
+    val overallLuckConfidence: LuckConfidence,
     /** 角色活动祈愿(301)统计 */
     val characterPoolStats: PoolStats?,
     /** 角色活动祈愿-2(400)统计 */

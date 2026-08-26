@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import com.genshin.gachahelper.analysis.LuckConfidence
 import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
@@ -192,8 +193,9 @@ private fun HeroLuckCard(uiState: HomeUiState) {
             (uiState.character2Stats?.fiveStarCount ?: 0)
     val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
 
-    // 运气评分：基于计算引擎的平均出金
-    val luckScore = calculateLuckScore(avgPulls, totalFiveStars)
+    // 运气评分：使用计算引擎基于真实概率模型生成的综合运气分
+    val luckScore = uiState.report?.overallLuckScore ?: 0
+    val luckConfidence = uiState.report?.overallLuckConfidence ?: LuckConfidence.INSUFFICIENT
     val luckVerdict = luckVerdictText(luckScore)
 
     Card(
@@ -300,7 +302,7 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
-                    text = "运气指数 $luckScore",
+                    text = "运气指数 $luckScore · ${luckConfidence.displayName}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                 )
@@ -615,14 +617,12 @@ private fun LuckDetailCard(uiState: HomeUiState) {
         uiState.noviceStats,
         uiState.chronicledStats
     )
-    // 只取有五星记录的池来算最非/最欧，避免空池的 0 值污染结果
-    val statsWithFiveStars = stats.filter { it.fiveStarCount > 0 }
     val totalPulls = stats.sumOf { it.totalPulls }
     val totalFiveStars = stats.sumOf { it.fiveStarCount }
-    // 使用计算引擎生成的全局报告平均值，禁止在 UI 层用 totalPulls / totalFiveStars
+    // 使用计算引擎生成的全局报告数据，禁止在 UI 层自行计算
     val avgPulls = uiState.report?.avgPullsPerFiveStar ?: 0.0
-    val worstLuck = statsWithFiveStars.maxOfOrNull { it.maxPullsForFiveStar } ?: 0
-    val bestLuck = statsWithFiveStars.minOfOrNull { it.minPullsForFiveStar } ?: 0
+    val worstLuck = uiState.report?.worstLuck ?: 0
+    val bestLuck = uiState.report?.bestLuck ?: 0
     val recentInterval = uiState.recentFiveStarIntervals.firstOrNull() ?: 0
 
     // UP率：仅角色池（301 + 400）统计
@@ -785,15 +785,7 @@ private fun SectionHeader(title: String) {
     )
 }
 
-// ============================ 运气评分计算 ============================
-
-/**
- * 运气评分：基于平均出金抽数，avg=10→100分, avg=90→0分
- */
-private fun calculateLuckScore(avgPulls: Double, totalFiveStars: Int): Int {
-    if (totalFiveStars == 0 || avgPulls <= 0) return 0
-    return ((90.0 - avgPulls) / 80.0 * 100).coerceIn(0.0, 100.0).toInt()
-}
+// ============================ 运气评语 ============================
 
 private fun luckVerdictText(score: Int): String = when {
     score >= 80 -> "运气爆棚"

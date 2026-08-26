@@ -839,4 +839,236 @@ class GachaStatsCalculatorTest {
         // 总抽数独立计数：69 + 1 + 30 = 100
         assertEquals(100, report.totalPulls)
     }
+
+    // ==================== 测试N：概率模型 & 运气分 ====================
+
+    /**
+     * 测试概率模型基本性质：
+     * - 第 1 抽出金概率 ≈ 基础概率
+     * - 硬保底抽数的生存函数 = 0
+     * - CDF 在硬保底处 = 1
+     */
+    @Test
+    fun `概率模型基本性质验证`() {
+        // 角色池：第 1 抽概率 ≈ 0.6%
+        val p1 = GachaProbabilityModel.pmf(1, GachaType.CHARACTER.value)
+        assertEquals(0.006, p1, 0.0001)
+
+        // 角色池：第 90 抽（硬保底）生存函数 = 0
+        val s90 = GachaProbabilityModel.survival(90, GachaType.CHARACTER.value)
+        assertEquals(0.0, s90, 0.0001)
+
+        // 角色池：CDF 在 90 抽 = 1
+        val cdf90 = GachaProbabilityModel.cdf(90, GachaType.CHARACTER.value)
+        assertEquals(1.0, cdf90, 0.0001)
+
+        // 武器池：第 80 抽（硬保底）生存函数 = 0
+        val s80 = GachaProbabilityModel.survival(80, GachaType.WEAPON.value)
+        assertEquals(0.0, s80, 0.0001)
+    }
+
+    /**
+     * 测试运气分边界值：
+     * - 1 抽 = 极高分（接近 100）
+     * - 90 抽 = 0 分
+     * - 期望值附近 ≈ 50 分
+     */
+    @Test
+    fun `运气分边界值验证`() {
+        // 1 抽出金：极欧，接近 100 分
+        val score1 = GachaProbabilityModel.calculateSingleLuckScore(1, GachaType.CHARACTER.value)
+        assertTrue("1 抽出金应该接近 100 分，实际 $score1", score1 >= 99)
+
+        // 90 抽出金：极非，0 分
+        val score90 = GachaProbabilityModel.calculateSingleLuckScore(90, GachaType.CHARACTER.value)
+        assertEquals(0, score90)
+
+        // 0 抽：视为 100 分（边界）
+        val score0 = GachaProbabilityModel.calculateSingleLuckScore(0, GachaType.CHARACTER.value)
+        assertEquals(100, score0)
+    }
+
+    /**
+     * 测试 FiveStarStats 中的运气分是否正确计算。
+     * 使用简单数据：5 个五星，间隔分别为 30、60、45、75、20
+     */
+    @Test
+    fun `FiveStarStats 运气分计算`() {
+        val records = buildList {
+            var orderNum = 1L
+            // 第一个五星：第 30 抽
+            for (i in 1..29) add(makeRecord(orderNum++, 3))
+            add(makeRecord(orderNum++, 5, itemName = "五星1"))
+            // 第二个五星：第 60 抽
+            for (i in 1..59) add(makeRecord(orderNum++, 3))
+            add(makeRecord(orderNum++, 5, itemName = "五星2"))
+            // 第三个五星：第 45 抽
+            for (i in 1..44) add(makeRecord(orderNum++, 3))
+            add(makeRecord(orderNum++, 5, itemName = "五星3"))
+            // 第四个五星：第 75 抽
+            for (i in 1..74) add(makeRecord(orderNum++, 3))
+            add(makeRecord(orderNum++, 5, itemName = "五星4"))
+            // 第五个五星：第 20 抽
+            for (i in 1..19) add(makeRecord(orderNum++, 3))
+            add(makeRecord(orderNum++, 5, itemName = "五星5"))
+        }
+
+        val stats = calculator.calculatePoolStats(records, GachaType.CHARACTER.value)
+
+        // 间隔应该是：30、60、45、75、20
+        assertEquals(listOf(30, 60, 45, 75, 20), stats.fiveStar.intervals)
+
+        // 平均出金 = (30+60+45+75+20) / 5 = 230 / 5 = 46
+        assertEquals(46.0, stats.fiveStar.avgPullsPerFiveStar, 0.1)
+
+        // 运气分应该有值（0~100）
+        assertTrue("运气分应在 0~100 之间，实际 ${stats.fiveStar.luckScore}",
+            stats.fiveStar.luckScore in 0..100)
+
+        // 5 个样本 → 可信度 = LOW（参考）
+        assertEquals(LuckConfidence.LOW, stats.fiveStar.luckConfidence)
+
+        // 单次运气分数量应该等于间隔数量
+        assertEquals(5, stats.fiveStar.singleLuckScores.size)
+    }
+
+    /**
+     * 测试 301+400 共享保底池的运气分是否正确。
+     * 两个池共享五星间隔，运气分也应该基于共享间隔计算。
+     */
+    @Test
+    fun `301+400共享保底池运气分一致`() {
+        // 301 池：前 20 抽普通，第 21 抽出五星
+        val records301 = buildList {
+            for (i in 1..20) add(makeRecord(i.toLong(), 3, GachaType.CHARACTER.value))
+            add(makeRecord(21L, 5, GachaType.CHARACTER.value, "角色A"))
+            // 再 40 抽普通
+            for (i in 22..61) add(makeRecord(i.toLong(), 3, GachaType.CHARACTER.value))
+        }
+
+        // 400 池：第 62 抽出五星（接着 301 的第 61 抽）
+        val records400 = buildList {
+            add(makeRecord(62L, 5, GachaType.CHARACTER_2.value, "角色B"))
+            // 再 30 抽普通
+            for (i in 63..92) add(makeRecord(i.toLong(), 3, GachaType.CHARACTER_2.value))
+        }
+
+        val stats301 = calculator.calculatePoolStats(
+            records301, GachaType.CHARACTER.value,
+            sharedPityRecords = records400
+        )
+        val stats400 = calculator.calculatePoolStats(
+            records400, GachaType.CHARACTER_2.value,
+            sharedPityRecords = records301
+        )
+
+        // 两个池的五星间隔应该相同（共享保底）
+        assertEquals(stats301.fiveStar.intervals, stats400.fiveStar.intervals)
+
+        // 运气分也应该相同
+        assertEquals(stats301.fiveStar.luckScore, stats400.fiveStar.luckScore)
+
+        // 间隔：第一个五星在第 21 抽（301 池），第二个五星在第 62 抽（400 池）
+        // 按合并顺序：1~21（301，第21抽五星），22~62（301的22~61 + 400的62，共41抽，第62抽五星）
+        // 间隔 = [21, 41]
+        assertEquals(listOf(21, 41), stats301.fiveStar.intervals)
+    }
+
+    /**
+     * 测试 generateReport 综合运气分。
+     * 角色池共享间隔只计一份，不能重复计入。
+     */
+    @Test
+    fun `generateReport综合运气分_角色池不重复计入`() {
+        // 301 池：30 抽出五星
+        val records301 = buildList {
+            for (i in 1..29) add(makeRecord(i.toLong(), 3, GachaType.CHARACTER.value))
+            add(makeRecord(30L, 5, GachaType.CHARACTER.value, "角色A"))
+        }
+
+        // 400 池：接着 60 抽出五星（间隔 60）
+        val records400 = buildList {
+            for (i in 31..90) add(makeRecord(i.toLong(), 3, GachaType.CHARACTER_2.value))
+            add(makeRecord(91L, 5, GachaType.CHARACTER_2.value, "角色B"))
+        }
+
+        // 武器池：40 抽出五星
+        val weaponRecords = buildList {
+            for (i in 100..139) add(makeRecord(i.toLong(), 3, GachaType.WEAPON.value))
+            add(makeRecord(140L, 5, GachaType.WEAPON.value, "武器A"))
+        }
+
+        val report = calculator.generateReport(
+            characterRecords = records301,
+            character2Records = records400,
+            weaponRecords = weaponRecords,
+            standardRecords = emptyList()
+        )
+
+        // 角色池共享间隔：[30, 61]（第 30 抽和第 91 抽，间隔 30 和 61）
+        // 武器池间隔：[41]
+        // 全局间隔数 = 3 个
+
+        // 综合运气分应该有值
+        assertTrue("综合运气分应在 0~100 之间，实际 ${report.overallLuckScore}",
+            report.overallLuckScore in 0..100)
+
+        // 可信度：3 个样本 → INSUFFICIENT（数据较少）
+        assertEquals(LuckConfidence.INSUFFICIENT, report.overallLuckConfidence)
+
+        // 全局平均出金：角色池共享 [30, 61] + 武器 [41] = (30+61+41)/3 = 44
+        assertEquals(44.0, report.avgPullsPerFiveStar, 0.5)
+    }
+
+    /**
+     * 测试可信度等级划分。
+     */
+    @Test
+    fun `可信度等级划分`() {
+        assertEquals(LuckConfidence.INSUFFICIENT, LuckConfidence.fromSampleCount(0))
+        assertEquals(LuckConfidence.INSUFFICIENT, LuckConfidence.fromSampleCount(1))
+        assertEquals(LuckConfidence.INSUFFICIENT, LuckConfidence.fromSampleCount(3))
+        assertEquals(LuckConfidence.LOW, LuckConfidence.fromSampleCount(4))
+        assertEquals(LuckConfidence.LOW, LuckConfidence.fromSampleCount(9))
+        assertEquals(LuckConfidence.MEDIUM, LuckConfidence.fromSampleCount(10))
+        assertEquals(LuckConfidence.MEDIUM, LuckConfidence.fromSampleCount(19))
+        assertEquals(LuckConfidence.HIGH, LuckConfidence.fromSampleCount(20))
+        assertEquals(LuckConfidence.HIGH, LuckConfidence.fromSampleCount(50))
+    }
+
+    /**
+     * 回归测试：五星间隔不能超过硬保底（90 抽角色池）。
+     * 数据不完整时第一条间隔可能 > 90，这是物理上不可能的值。
+     * 注意：calculateFiveStarStats 不过滤（保留原始数据供排查），
+     * 但 UI 层和 HistoryViewModel 会用 pityCeiling 过滤显示。
+     */
+    @Test
+    fun `回归测试_五星间隔超过保底上限的异常值`() {
+        // 模拟数据不完整：只有一个五星，在第 120 条记录的位置
+        // （真实情况是数据缺失了前面的五星记录）
+        val records = buildList {
+            for (i in 1..119) add(makeRecord(i.toLong(), 3))
+            add(makeRecord(120L, 5, itemName = "异常五星"))
+        }
+
+        val stats = calculator.calculatePoolStats(records, GachaType.CHARACTER.value)
+
+        // 原始间隔 = 120（超过保底上限，是数据不完整的标志）
+        assertEquals(120, stats.fiveStar.intervals.firstOrNull())
+
+        // 公共方法 calculateFiveStarIntervals 不过滤（保持 v1.5.2 行为）
+        // 过滤逻辑在调用方（HistoryViewModel / HomeViewModel）处理
+    }
+
+    /**
+     * 回归测试：空数据时运气分和可信度的默认值。
+     */
+    @Test
+    fun `回归测试_空数据运气分默认值`() {
+        val stats = calculator.calculatePoolStats(emptyList(), GachaType.CHARACTER.value)
+
+        assertEquals(0, stats.fiveStar.luckScore)
+        assertEquals(emptyList<Int>(), stats.fiveStar.singleLuckScores)
+        assertEquals(LuckConfidence.INSUFFICIENT, stats.fiveStar.luckConfidence)
+    }
 }
