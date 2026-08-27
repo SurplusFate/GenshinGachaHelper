@@ -14,9 +14,13 @@ import javax.inject.Singleton
 /**
  * 接口响应解析器（硬编码米游社官方响应结构）
  *
- * 之前从 ConfigStore.ApiConfig.mapping 动态读取字段路径，但官方响应结构是固定的：
- *   retcode/message/data.list → [{ name, item_type, rank_type, time, id }]
- * 自定义配置对解析行为没有任何可观察效果。改为直接硬编码，减少间接层与空安全复杂度。
+ * 官方响应结构固定为：
+ *   retcode/message/data.list → [{ name, item_type, rank_type, time, id, gacha_type }]
+ *
+ * 关键：每条记录自带 gacha_type 字段，标识该记录属于哪个卡池。
+ * 用 gacha_type=301 查询时，API 会同时返回 301 和 400 两个角色池的记录。
+ * 必须用响应中的 gacha_type 而非请求参数来确定 poolType，否则 400 池数据
+ * 会被错误标记为 301。
  */
 @Singleton
 class GachaResponseParser @Inject constructor() {
@@ -67,10 +71,20 @@ class GachaResponseParser @Inject constructor() {
                         GachaItemDatabase.inferRarity(itemName, itemTypeStr)
                     }
 
+                    // 优先使用响应中的 gacha_type 字段确定卡池归属。
+                    // 米游社 API 用 gacha_type=301 查询时会同时返回 400 池记录，
+                    // 必须按响应中的 gacha_type 分类，否则 400 池数据会被标成 301。
+                    val responseGachaType = getString(itemObj, "gacha_type")
+                    val actualPoolType = if (responseGachaType.isNotBlank()) {
+                        responseGachaType.toIntOrNull() ?: poolType
+                    } else {
+                        poolType
+                    }
+
                     records.add(
                         GachaRecordEntity(
                             accountId = accountId,
-                            poolType = poolType,
+                            poolType = actualPoolType,
                             itemName = itemName,
                             itemType = parseItemType(itemTypeStr),
                             rarity = rarity,

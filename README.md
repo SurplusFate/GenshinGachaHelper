@@ -118,6 +118,22 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-08-27 · v1.6.1 修复角色池 301/400 数据合并问题（tag `v1.6.1`）
+
+**版本信息**
+
+- `versionCode = 20`，`versionName = "1.6.1"`
+- 修复同步时角色池 400（角色活动祈愿-2）数据被错误标记为 301 的问题
+
+**Bug：角色池 400 数据被合并进 301**
+
+- **根因**：`GachaResponseParser` 使用请求参数 `poolType` 作为每条记录的卡池标识，而非读取 API 响应中每条记录自带的 `gacha_type` 字段。米游社 API 用 `gacha_type=301` 查询时会同时返回 301 和 400 两个角色池的记录，导致 400 池记录全部被标记为 `poolType=301`。由于数据库唯一约束 `accountId+orderNumber` + `OnConflictStrategy.IGNORE`，已存为 301 的记录无法被更正为 400。
+- **修复**：
+  - `GachaResponseParser` 读取每条记录的 `gacha_type` 字段，用响应中的值确定 `poolType`，而非请求参数
+  - 数据库迁移 v1→v2：清除所有 `poolType IN (301, 400)` 的记录，下次同步时解析器会正确分类
+  - `DatabaseModule` 从 `fallbackToDestructiveMigration` 改为 `addMigrations`，保留非角色池数据
+- **影响文件**：`GachaResponseParser.kt`、`GachaDatabase.kt`、`DatabaseModule.kt`、`GachaSyncService.kt`
+
 ### 2026-08-26 · v1.6.0 登录认证修复 + 同步限流处理（tag `v1.6.0`）
 
 **版本信息**

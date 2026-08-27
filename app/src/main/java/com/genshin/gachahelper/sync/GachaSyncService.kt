@@ -130,6 +130,13 @@ class GachaSyncService @Inject constructor(
 
             // ---- 阶段二：按卡池分页查询 ----
             // 所有池复用同一个 AuthKey，不重新获取
+            //
+            // 注意：米游社 API 用 gacha_type=301 查询时会同时返回 301 和 400
+            // 两个角色池的记录。GachaResponseParser 会读取每条记录自带的
+            // gacha_type 字段进行正确分类，所以 301 查询过程中 400 记录
+            // 也会被正确存入数据库（poolType=400）。
+            // CHARACTER_2（400）查询作为安全网保留：如果 API 行为变化
+            // 导致 301 不再返回 400 记录，400 查询仍能补全。
             val pools = listOf(
                 GachaType.CHARACTER,
                 GachaType.CHARACTER_2,

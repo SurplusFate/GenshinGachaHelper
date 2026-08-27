@@ -25,7 +25,7 @@ object DatabaseModule {
             GachaDatabase::class.java,
             GachaDatabase.DATABASE_NAME
         )
-            .fallbackToDestructiveMigration() // V1 简化，后续版本需使用 Migration
+            .addMigrations(GachaDatabase.MIGRATION_1_2)
             .build()
     }
 
