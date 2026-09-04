@@ -23,11 +23,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.genshin.gachahelper.analysis.GachaReport
 import com.genshin.gachahelper.ui.theme.FiveStarColor
+import com.genshin.gachahelper.ui.theme.WishEmptyGlow
+import com.genshin.gachahelper.ui.theme.WishShapes
 
 @Composable
 fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
@@ -39,13 +42,7 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
             uiState.report == null -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
+                WishEmptyGlow(modifier = Modifier.fillMaxSize()) {
                     Text(
                         text = "暂无抽卡数据",
                         style = MaterialTheme.typography.titleMedium
@@ -63,9 +60,11 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                     // 报告标题
                     Card(
                         modifier = Modifier.fillMaxWidth(),
+                        shape = WishShapes.lg,
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                     ) {
                         Column(
                             modifier = Modifier
@@ -176,6 +175,7 @@ fun ReportRow(label: String, value: String, valueColor: androidx.compose.ui.grap
             text = value,
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace,
             color = valueColor
         )
     }
@@ -185,7 +185,7 @@ fun ReportRow(label: String, value: String, valueColor: androidx.compose.ui.grap
 fun MiniPoolReport(poolLabel: String, stats: com.genshin.gachahelper.analysis.PoolStats) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(

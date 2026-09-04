@@ -24,7 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -50,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,8 +64,15 @@ import com.genshin.gachahelper.data.local.dao.GachaRecordDao.DailyStat
 import com.genshin.gachahelper.data.local.dao.GachaRecordDao.ItemCount
 import com.genshin.gachahelper.ui.navigation.Screen
 import com.genshin.gachahelper.ui.theme.FiveStarColor
+import com.genshin.gachahelper.ui.theme.FiveStarGlowInner
 import com.genshin.gachahelper.ui.theme.FourStarColor
 import com.genshin.gachahelper.ui.theme.ThreeStarColor
+import com.genshin.gachahelper.ui.theme.WishEmptyGlow
+import com.genshin.gachahelper.ui.theme.WishShapes
+import com.genshin.gachahelper.ui.theme.wishDivider
+import com.genshin.gachahelper.ui.theme.wishSuccess
+import com.genshin.gachahelper.ui.theme.wishTextHigh
+import com.genshin.gachahelper.ui.theme.wishTextMid
 import kotlinx.coroutines.launch
 import java.time.YearMonth
 
@@ -82,10 +90,9 @@ fun StatsScreen(
             }
         }
         !uiState.hasData -> {
+            WishEmptyGlow(modifier = Modifier.fillMaxSize()) {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
+                modifier = Modifier.padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -99,6 +106,7 @@ fun StatsScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
             }
         }
         else -> {
@@ -232,7 +240,7 @@ private fun NavTab(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(WishShapes.xs)
             .clickable { onClick() }
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -250,7 +258,7 @@ private fun NavTab(
             modifier = Modifier
                 .width(if (isSelected) 24.dp else 0.dp)
                 .height(2.dp)
-                .clip(RoundedCornerShape(1.dp))
+                .clip(WishShapes.pill)
                 .background(
                     if (isSelected) MaterialTheme.colorScheme.primary
                     else Color.Transparent
@@ -280,10 +288,12 @@ private fun OverviewContent(report: GachaReport, navController: NavController) {
         // 总览卡片
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
+            shape = WishShapes.md,
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.primaryContainer
-            )
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
@@ -330,7 +340,9 @@ private fun OverviewContent(report: GachaReport, navController: NavController) {
         // 运气分析卡片
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
+            shape = WishShapes.md,
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
@@ -345,7 +357,7 @@ private fun OverviewContent(report: GachaReport, navController: NavController) {
                     label = "最欧",
                     value = report.bestLuck,
                     maxValue = 90,
-                    color = Color(0xFF1DC981)
+                    color = wishSuccess()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 LuckBarRow(
@@ -415,7 +427,7 @@ private fun OverviewContent(report: GachaReport, navController: NavController) {
         Button(
             onClick = { navController.navigate(Screen.Report.route) },
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp)
+            shape = WishShapes.lg
         ) {
             Text("生成抽卡报告")
         }
@@ -444,14 +456,14 @@ private fun LuckBarRow(
             modifier = Modifier
                 .weight(1f)
                 .height(8.dp)
-                .clip(RoundedCornerShape(4.dp))
+                .clip(WishShapes.pill)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(percent)
                     .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp))
+                    .clip(WishShapes.pill)
                     .background(color)
             )
         }
@@ -519,7 +531,7 @@ private fun TimelineContent(timeline: List<FiveStarTimelineItem>) {
             TimelineStat(
                 value = "$bestInterval",
                 label = "最欧",
-                color = Color(0xFF1DC981)
+                color = wishSuccess()
             )
             TimelineStat(
                 value = "$worstInterval",
@@ -573,7 +585,7 @@ private fun TimelineNode(item: FiveStarTimelineItem) {
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // 圆点 + 连接线
+        val lineColor = wishDivider()
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -583,7 +595,7 @@ private fun TimelineNode(item: FiveStarTimelineItem) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val y = size.height / 2f
                 drawLine(
-                    color = FiveStarColor.copy(alpha = 0.5f),
+                    color = lineColor,
                     start = Offset(0f, y),
                     end = Offset(size.width, y),
                     strokeWidth = 3.dp.toPx()
@@ -591,10 +603,14 @@ private fun TimelineNode(item: FiveStarTimelineItem) {
             }
             Box(
                 modifier = Modifier
-                    .size(16.dp)
-                    .clip(CircleShape)
-                    .background(FiveStarColor)
-                    .border(2.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                    .size(18.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            listOf(FiveStarGlowInner, FiveStarColor)
+                        ),
+                        shape = CircleShape
+                    )
+                    .border(1.5.dp, FiveStarColor.copy(alpha = 0.7f), CircleShape)
             )
         }
 
@@ -609,7 +625,7 @@ private fun TimelineNode(item: FiveStarTimelineItem) {
         Text(
             text = item.poolName,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = wishTextMid(),
             fontSize = 10.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -689,7 +705,7 @@ private fun RaritySection(title: String, items: List<ItemCount>, color: Color) {
 private fun CollectionCard(item: ItemCount, borderColor: Color) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
+        shape = WishShapes.xs,
         border = BorderStroke(1.5.dp, borderColor),
         color = borderColor.copy(alpha = 0.08f)
     ) {
@@ -829,24 +845,26 @@ private fun CalendarContent(dailyStats: List<DailyStat>) {
 
 @Composable
 private fun CalendarDayCell(day: Int, count: Int, fiveCount: Int) {
+    val hasFiveStar = fiveCount > 0
     val backgroundColor = when {
+        hasFiveStar -> FiveStarColor.copy(alpha = 0.28f)
         count >= 20 -> MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
         count >= 10 -> MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
         count >= 1 -> MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
         else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     }
-    val hasFiveStar = fiveCount > 0
+    val dayTextColor = wishTextHigh()
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(6.dp))
+            .clip(WishShapes.xs)
             .background(backgroundColor)
             .then(
                 if (hasFiveStar) {
                     Modifier.border(
                         width = 1.5.dp,
                         color = FiveStarColor,
-                        shape = RoundedCornerShape(6.dp)
+                        shape = WishShapes.xs
                     )
                 } else {
                     Modifier
@@ -860,14 +878,14 @@ private fun CalendarDayCell(day: Int, count: Int, fiveCount: Int) {
             Text(
                 text = "$day",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface
+                color = dayTextColor
             )
             if (count > 0) {
                 Text(
                     text = "$count",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = dayTextColor
                 )
             }
         }
@@ -891,6 +909,7 @@ private fun CalendarLegend() {
         LegendBox(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
         LegendBox(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
         LegendBox(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f))
+        LegendBox(color = FiveStarColor.copy(alpha = 0.28f))
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = "多",
@@ -919,7 +938,7 @@ private fun LegendBox(color: Color) {
         modifier = Modifier
             .padding(horizontal = 2.dp)
             .size(14.dp)
-            .clip(RoundedCornerShape(3.dp))
+            .clip(WishShapes.xs)
             .background(color)
     )
 }
@@ -928,12 +947,10 @@ private fun LegendBox(color: Color) {
 
 @Composable
 private fun EmptyState(message: String) {
-    Column(
+    WishEmptyGlow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(24.dp)
     ) {
         Text(
             text = message,
@@ -960,6 +977,7 @@ fun StatMini(
             text = value,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace,
             color = valueColor
         )
     }
@@ -969,8 +987,9 @@ fun StatMini(
 fun PoolStatCard(poolLabel: String, stats: PoolStats) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        shape = WishShapes.md,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(

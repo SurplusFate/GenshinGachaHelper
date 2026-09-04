@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
@@ -57,6 +56,9 @@ import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.ui.theme.FiveStarColor
 import com.genshin.gachahelper.ui.theme.FourStarColor
 import com.genshin.gachahelper.ui.theme.ThreeStarColor
+import com.genshin.gachahelper.ui.theme.WishEmptyGlow
+import com.genshin.gachahelper.ui.theme.WishShapes
+import com.genshin.gachahelper.ui.theme.rarityColor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -225,7 +227,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
                         item {
                             Surface(
                                 modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                shape = RoundedCornerShape(8.dp),
+                                shape = WishShapes.xs,
                                 color = MaterialTheme.colorScheme.errorContainer
                             ) {
                                 Text(
@@ -278,7 +280,7 @@ fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
             }
         },
         singleLine = true,
-        shape = RoundedCornerShape(24.dp),
+        shape = WishShapes.lg,
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = MaterialTheme.colorScheme.primary,
             unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
@@ -415,8 +417,9 @@ fun SummaryBar(summary: HistorySummary) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        shape = WishShapes.md,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier
@@ -506,7 +509,7 @@ fun DateHeader(date: String, dayStat: DayStat?) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 8.dp, bottom = 4.dp),
-        shape = RoundedCornerShape(8.dp),
+        shape = WishShapes.xs,
         color = if (hasFive) FiveStarColor.copy(alpha = 0.12f)
         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
@@ -558,22 +561,24 @@ fun DateHeader(date: String, dayStat: DayStat?) {
 
 @Composable
 fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) {
-    val rarityColor = when (record.rarity) {
-        5 -> FiveStarColor
-        4 -> FourStarColor
-        else -> ThreeStarColor
-    }
+    val rarityColor = rarityColor(record.rarity)
     val timeText = if (record.time.length >= 16) record.time.substring(11, 16) else record.time.takeLast(5)
+    val borderAlpha = when (record.rarity) {
+        5 -> 0.5f
+        4 -> 0.35f
+        else -> 0.15f
+    }
+    val badgeAlpha = if (record.rarity == 5) 0.22f else 0.15f
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
-        shape = RoundedCornerShape(10.dp),
+        shape = WishShapes.xs,
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(
             width = 1.dp,
-            color = rarityColor.copy(alpha = 0.15f)
+            color = rarityColor.copy(alpha = borderAlpha)
         )
     ) {
         Row(
@@ -586,12 +591,12 @@ fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) 
             Box(
                 modifier = Modifier
                     .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(rarityColor.copy(alpha = 0.15f))
+                    .clip(WishShapes.xs)
+                    .background(rarityColor.copy(alpha = badgeAlpha))
                     .border(
                         width = 1.5.dp,
                         color = rarityColor,
-                        shape = RoundedCornerShape(8.dp)
+                        shape = WishShapes.xs
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -628,7 +633,7 @@ fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) 
                     // 五星记录额外显示间隔标签
                     if (record.rarity == 5 && interval != null) {
                         Surface(
-                            shape = RoundedCornerShape(10.dp),
+                            shape = WishShapes.pill,
                             color = FiveStarColor.copy(alpha = 0.15f)
                         ) {
                             Text(
@@ -656,10 +661,7 @@ fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) 
 
 @Composable
 fun EmptyState(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    WishEmptyGlow(modifier = modifier.fillMaxSize()) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

@@ -1,9 +1,11 @@
 package com.genshin.gachahelper.ui.home
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,8 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,13 +32,15 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -54,7 +57,17 @@ import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.sync.SyncState
 import com.genshin.gachahelper.ui.navigation.Screen
 import com.genshin.gachahelper.ui.theme.FiveStarColor
-import com.genshin.gachahelper.ui.theme.FourStarColor
+import com.genshin.gachahelper.ui.theme.WishDark
+import com.genshin.gachahelper.ui.theme.WishEmptyGlow
+import com.genshin.gachahelper.ui.theme.WishLight
+import com.genshin.gachahelper.ui.theme.WishShapes
+import com.genshin.gachahelper.ui.theme.goldGlowBorder
+import com.genshin.gachahelper.ui.theme.isWishDark
+import com.genshin.gachahelper.ui.theme.rememberReduceMotion
+import com.genshin.gachahelper.ui.theme.wishAccentGold
+import com.genshin.gachahelper.ui.theme.wishCardGradient
+import com.genshin.gachahelper.ui.theme.wishSuccess
+import com.genshin.gachahelper.ui.theme.wishWarning
 
 @Composable
 fun HomeScreen(
@@ -72,13 +85,12 @@ fun HomeScreen(
 
     // 既没登录也没有本地数据 → 引导页
     if (!uiState.isLoggedIn && !uiState.hasData) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
+        WishEmptyGlow(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
             Text(
                 text = "原神抽卡助手",
                 style = MaterialTheme.typography.headlineMedium,
@@ -103,6 +115,7 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("导入 UIGF 数据")
+            }
             }
         }
         return
@@ -198,14 +211,28 @@ private fun HeroLuckCard(uiState: HomeUiState) {
     val luckConfidence = uiState.report?.overallLuckConfidence ?: LuckConfidence.INSUFFICIENT
     val luckVerdict = luckVerdictText(luckScore)
 
+    val dark = isWishDark()
+    val gold = wishAccentGold()
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .goldGlowBorder(
+                glowColor = gold,
+                radius = 28.dp,
+                shape = WishShapes.lg
+            ),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
+            containerColor = Color.Transparent
         ),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = WishShapes.lg,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
+        Box(
+            modifier = Modifier.wishCardGradient(
+                start = if (dark) WishDark.bgFloat else WishLight.bgFloat,
+                end = if (dark) WishDark.bgCard else WishLight.bgCard
+            )
+        ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -241,8 +268,8 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                     Text(
                         text = "$totalPulls",
                         style = MaterialTheme.typography.displaySmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        fontWeight = FontWeight.Black,
+                        color = gold
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
@@ -308,6 +335,7 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                 )
             }
         }
+        }
     }
 }
 
@@ -347,8 +375,20 @@ private fun HeroStat(
 @Composable
 private fun LuckRing(score: Int) {
     val animatedScore by animateFloatAsState(targetValue = score.toFloat(), label = "luck")
-    val primaryColor = MaterialTheme.colorScheme.onPrimaryContainer
+    val gold = wishAccentGold()
     val trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f)
+    val reduceMotion = rememberReduceMotion()
+    val breath = remember { Animatable(1f) }
+    LaunchedEffect(reduceMotion) {
+        if (reduceMotion) {
+            breath.snapTo(1f)
+            return@LaunchedEffect
+        }
+        while (true) {
+            breath.animateTo(0.6f, tween(1000))
+            breath.animateTo(1.0f, tween(1000))
+        }
+    }
 
     Box(
         modifier = Modifier.size(80.dp),
@@ -356,7 +396,6 @@ private fun LuckRing(score: Int) {
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val stroke = 6.dp.toPx()
-            // 背景圆
             drawArc(
                 color = trackColor,
                 startAngle = 0f,
@@ -364,10 +403,9 @@ private fun LuckRing(score: Int) {
                 useCenter = false,
                 style = Stroke(width = stroke)
             )
-            // 进度弧
             val sweep = 360f * animatedScore / 100f
             drawArc(
-                color = primaryColor,
+                color = gold.copy(alpha = breath.value),
                 startAngle = -90f,
                 sweepAngle = sweep,
                 useCenter = false,
@@ -402,8 +440,9 @@ private fun PityGridCard(
     if (poolStats == null) {
         Surface(
             modifier = modifier,
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            shape = WishShapes.md,
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(
                 modifier = Modifier
@@ -436,13 +475,14 @@ private fun PityGridCard(
     val progressColor = if (isNovice) {
         noviceProgressColor(poolStats.currentPity, poolStats.pityCeiling)
     } else {
-        pityProgressColor(poolStats.currentPity)
+        pityProgressColor(poolStats.currentPity, poolStats.pityCeiling)
     }
 
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        shape = WishShapes.md,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
@@ -474,14 +514,14 @@ private fun PityGridCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clip(WishShapes.pill)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
             ) {
                 Box(
                     modifier = Modifier
                         .width(maxWidth * pityPercent)
                         .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
+                        .clip(WishShapes.pill)
                         .background(progressColor)
                 )
             }
@@ -529,24 +569,24 @@ private fun PityGridCard(
 }
 
 @Composable
-private fun pityProgressColor(currentPity: Int): Color = when {
-    currentPity >= 75 -> MaterialTheme.colorScheme.error
-    currentPity >= 60 -> Color(0xFFEFAA17)
-    else -> FiveStarColor
+private fun pityProgressColor(currentPity: Int, ceiling: Int): Color {
+    val remaining = ceiling - currentPity
+    return when {
+        remaining <= 10 -> wishAccentGold()
+        else -> MaterialTheme.colorScheme.primary
+    }
 }
 
 /**
- * 新手池进度颜色：按已用 20 抽池总量的比例变色
- * - ≤10 抽：刚开池，正常色
- * - 11~15 抽：提醒色
- * - ≥16 抽：接近用完（20 抽后自动关闭）
+ * 新手池进度颜色：远距离用星蓝，接近用完用金色。
  */
 @Composable
-private fun noviceProgressColor(currentPity: Int, ceiling: Int): Color = when {
-    ceiling <= 0 -> FiveStarColor
-    currentPity >= ceiling - 4 -> MaterialTheme.colorScheme.primary
-    currentPity >= ceiling - 10 -> Color(0xFFEFAA17)
-    else -> FiveStarColor
+private fun noviceProgressColor(currentPity: Int, ceiling: Int): Color {
+    val remaining = if (ceiling <= 0) 0 else ceiling - currentPity
+    return when {
+        remaining <= 4 -> wishAccentGold()
+        else -> MaterialTheme.colorScheme.primary
+    }
 }
 
 // ============================ 最近五星横滑 ============================
@@ -561,8 +601,12 @@ private fun RecentFiveStarsRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        items(pairs) { (record, interval) ->
-            RecentFiveStarCard(record = record, interval = interval)
+        itemsIndexed(pairs) { index, (record, interval) ->
+            RecentFiveStarCard(
+                record = record,
+                interval = interval,
+                playGlow = index == 0
+            )
         }
     }
 }
@@ -570,36 +614,64 @@ private fun RecentFiveStarsRow(
 @Composable
 private fun RecentFiveStarCard(
     record: GachaRecordEntity,
-    interval: Int
+    interval: Int,
+    playGlow: Boolean = false
 ) {
+    val glow = rememberFiveStarGlow(play = playGlow)
     Surface(
-        modifier = Modifier.width(130.dp),
-        shape = RoundedCornerShape(12.dp),
-        border = androidx.compose.foundation.BorderStroke(2.dp, FiveStarColor),
+        modifier = Modifier
+            .width(130.dp)
+            .drawBehind {
+                if (glow > 0f) {
+                    drawRoundRect(
+                        color = FiveStarColor.copy(alpha = glow),
+                        cornerRadius = CornerRadius(18.dp.toPx())
+                    )
+                }
+            },
+        shape = WishShapes.md,
+        border = BorderStroke(1.5.dp, FiveStarColor.copy(alpha = 0.55f)),
         color = MaterialTheme.colorScheme.surface
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                text = record.itemName,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = FiveStarColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "距上次 $interval 抽",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = FiveStarColor
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = record.time.substringBefore(" ").ifEmpty { record.time },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        Box {
+            Column(modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 28.dp, bottom = 12.dp)) {
+                Text(
+                    text = record.itemName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "距上次 $interval 抽",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = FiveStarColor
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = record.time.substringBefore(" ").ifEmpty { record.time },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp),
+                shape = WishShapes.xs,
+                color = FiveStarColor.copy(alpha = 0.22f)
+            ) {
+                Text(
+                    text = "5",
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    color = FiveStarColor,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -632,16 +704,18 @@ private fun LuckDetailCard(uiState: HomeUiState) {
             (uiState.character2Stats?.fiveStarCount ?: 0)
     val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
 
+    val success = wishSuccess()
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        shape = WishShapes.md,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             LuckDetailRow("平均出金", if (totalFiveStars > 0) String.format("%.1f 抽", avgPulls) else "—", MaterialTheme.colorScheme.primary)
-            LuckDetailRow("最近五星", if (recentInterval > 0) "$recentInterval 抽" else "—", Color(0xFF1DC981))
-            LuckDetailRow("最非", if (worstLuck > 0) "$worstLuck 抽" else "—", MaterialTheme.colorScheme.error)
-            LuckDetailRow("最欧", if (bestLuck > 0) "$bestLuck 抽" else "—", FiveStarColor)
+            LuckDetailRow("最近五星", if (recentInterval > 0) "$recentInterval 抽" else "—", success)
+            LuckDetailRow("最非", if (worstLuck > 0) "$worstLuck 抽" else "—", wishWarning())
+            LuckDetailRow("最欧", if (bestLuck > 0) "$bestLuck 抽" else "—", success)
             LuckDetailRow("UP成功率", String.format("%.0f%%", upRate), MaterialTheme.colorScheme.primary)
             LuckDetailRow("总抽数", "$totalPulls", MaterialTheme.colorScheme.onSurface)
         }
@@ -694,7 +768,7 @@ private fun SyncSection(
                     Button(
                         onClick = { viewModel.sync() },
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(24.dp)
+                        shape = WishShapes.lg
                     ) {
                         Text("同步抽卡记录")
                     }
@@ -761,27 +835,28 @@ private fun SyncSection(
     } else {
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer
+            shape = WishShapes.md,
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "本地数据",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-                Text(
-                    text = "UID: ${uiState.uid ?: "未绑定"}（手动导入）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { navController.navigate(Screen.Auth.route) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp)
-                ) {
+                    Text(
+                        text = "本地数据",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "UID: ${uiState.uid ?: "未绑定"}（手动导入）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { navController.navigate(Screen.Auth.route) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = WishShapes.lg
+                    ) {
                     Text("登录米游社以同步最新数据")
                 }
             }
@@ -802,6 +877,20 @@ private fun SectionHeader(title: String) {
 }
 
 // ============================ 运气评语 ============================
+
+@Composable
+private fun rememberFiveStarGlow(play: Boolean): Float {
+    val reduceMotion = rememberReduceMotion()
+    val alpha = remember { Animatable(0f) }
+    LaunchedEffect(play, reduceMotion) {
+        if (play && !reduceMotion) {
+            alpha.snapTo(0f)
+            alpha.animateTo(0.25f, tween(200))
+            alpha.animateTo(0f, tween(400))
+        }
+    }
+    return alpha.value
+}
 
 private fun luckVerdictText(score: Int): String = when {
     score >= 80 -> "运气爆棚"

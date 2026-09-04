@@ -38,7 +38,7 @@ class ThemeRepository @Inject constructor(
     }
 
     val themeModeFlow: Flow<ThemeMode> = context.settingsDataStore.data.map { prefs ->
-        ThemeMode.fromStored(prefs[Keys.THEME_MODE] ?: ThemeMode.FOLLOW_SYSTEM.storedValue)
+        ThemeMode.fromStored(prefs[Keys.THEME_MODE] ?: ThemeMode.DARK.storedValue)
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {

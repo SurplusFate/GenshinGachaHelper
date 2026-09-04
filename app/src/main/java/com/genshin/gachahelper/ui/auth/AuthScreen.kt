@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -48,6 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.genshin.gachahelper.auth.GameRole
+import com.genshin.gachahelper.ui.theme.WishShapes
+import com.genshin.gachahelper.ui.theme.wishSkyBackground
 import com.google.accompanist.web.AccompanistWebViewClient
 import com.google.accompanist.web.WebView
 import com.google.accompanist.web.rememberWebViewState
@@ -59,7 +60,7 @@ fun AuthScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().wishSkyBackground()) {
         Box(modifier = Modifier.weight(1f)) {
             when (uiState.phase) {
                 AuthPhase.LOADING -> LoadingView(uiState.statusText)
@@ -283,8 +284,8 @@ fun QrCodeView(
         if (bitmap != null) {
             Card(
                 modifier = Modifier.size(260.dp),
-                shape = RoundedCornerShape(16.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                shape = WishShapes.lg,
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),

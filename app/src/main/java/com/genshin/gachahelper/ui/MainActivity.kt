@@ -29,7 +29,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             // 读取当前 theme mode；FOLLOW_SYSTEM 会通过 isSystemInDarkTheme() 的系统值自动响应
             val themeMode by themeRepository.themeModeFlow
-                .collectAsStateWithLifecycle(initialValue = ThemeMode.FOLLOW_SYSTEM)
+                .collectAsStateWithLifecycle(initialValue = ThemeMode.DARK)
             GenshinGachaHelperTheme(themeMode = themeMode) {
                 // fillMaxSize 的 Surface 提供主题背景色，渗透到透明系统栏下方形成沉浸效果；
                 // Scaffold 内的 TopAppBar / NavigationBar 会自动应用 statusBars / navigationBars 内边距。

@@ -118,6 +118,29 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-09-04 · v1.7.0 祈愿星辉 UI（tag `v1.7.0`）
+
+**版本信息**
+
+- `versionCode = 21`，`versionName = "1.7.0"`
+- 落地 UI 方案 A「祈愿星辉」表现层，不改业务逻辑、数据库与网络协议
+
+**视觉**
+
+- 新增 `ColorTokens` / `ShapeTokens` / `WishVisuals`，UI 层统一走 token
+- 默认主题深色（`ThemeRepository` 缺省 + `MainActivity` 首帧）
+- 首页 Hero 辉光卡、五星出货卡、运气拆解、保底进度条分档着色
+- 金色稀缺：辉光描边仅 Hero 与五星记录行；普通卡 1dp `outlineVariant`
+- 保底进度：track=`outlineVariant`，远=`primary`，近（剩余 ≤10 / 新手 ≤4）=`accentGold`
+- 底栏选中图标/文字 `onSecondary`，indicator `secondaryContainer`
+- 历史五星行、统计时间线/日历、登录星空、空态、顶栏随主题
+
+**影响文件**
+
+- `ui/theme/ColorTokens.kt`、`ShapeTokens.kt`、`WishVisuals.kt`、`Theme.kt`、`ThemeRepository.kt`
+- `HomeScreen.kt`、`HistoryScreen.kt`、`StatsScreen.kt`、`ReportScreen.kt`、`AuthScreen.kt`、`SettingsScreen.kt`
+- `GachaAppNavHost.kt`、`MainActivity.kt`
+
 ### 2026-08-27 · v1.6.1 修复角色池 301/400 数据合并问题（tag `v1.6.1`）
 
 **版本信息**
