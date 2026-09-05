@@ -96,7 +96,7 @@ fun GachaAppNavHost() {
                             selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = scheme.onSecondary,
-                                selectedTextColor = scheme.onSecondary,
+                                selectedTextColor = scheme.onSurface,
                                 indicatorColor = scheme.secondaryContainer,
                                 unselectedIconColor = scheme.onSurfaceVariant,
                                 unselectedTextColor = scheme.onSurfaceVariant

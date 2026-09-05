@@ -118,6 +118,23 @@ gradle assembleDebug
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 
+### 2026-09-05 · v1.7.2 浅色对比度修复（tag `v1.7.2`）
+
+**版本信息**
+
+- `versionCode = 23`，`versionName = "1.7.2"`
+- 修复浅色模式下部分文字看不清
+
+**对比度**
+
+- 底栏选中文字改用 `onSurface`，浅色下「统计」标签不再白底白字
+- 深蓝 `primaryContainer` 上的字改用 `wishOnPrimaryFill()`：浅色白字、深色高对比白
+- 覆盖统计总览卡、历史筛选芯片、报告标题、登录扫码提示
+
+**影响文件**
+
+- `GachaAppNavHost.kt`、`StatsScreen.kt`、`HistoryScreen.kt`、`ReportScreen.kt`、`AuthScreen.kt`、`WishVisuals.kt`
+
 ### 2026-09-04 · v1.7.0 祈愿星辉 UI（tag `v1.7.0`）
 
 **版本信息**

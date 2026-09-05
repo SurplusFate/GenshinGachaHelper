@@ -43,6 +43,9 @@ fun wishTextHigh(): Color = if (isWishDark()) WishDark.textHigh else WishLight.t
 fun wishTextMid(): Color = if (isWishDark()) WishDark.textMid else WishLight.textMid
 
 @Composable
+fun wishOnPrimaryFill(): Color = if (isWishDark()) WishDark.textHigh else WishLight.bgCard
+
+@Composable
 fun rememberReduceMotion(): Boolean {
     val context = LocalContext.current
     return remember {
