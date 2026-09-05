@@ -14,6 +14,7 @@ import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class HistoryFilter(
@@ -244,6 +246,8 @@ class HistoryViewModel @Inject constructor(
      *   · 若为"全部池"，取各池垫抽中的最大值（用户最关心的"最接近保底"的那个）。
      */
     private suspend fun computeStats(accountId: Long, filter: HistoryFilter) {
+        // 统计为纯内存过滤/排序/分组，历史记录量级可达数万条，整体切到后台线程避免阻塞主线程
+        withContext(Dispatchers.Default) {
         // 1. 从 DB 拿原始分池记录（与 Paging 底层同源 = 同一 accountId + 同池）
         val characterRecords = gachaRepository.getRecordsByPool(accountId, GachaType.CHARACTER.value)
         val character2Records = gachaRepository.getRecordsByPool(accountId, GachaType.CHARACTER_2.value)
@@ -361,5 +365,6 @@ class HistoryViewModel @Inject constructor(
                     fiveCount = records.count { it.rarity == 5 }
                 )
             }
+        }
     }
 }

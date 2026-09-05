@@ -8,6 +8,7 @@ import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.repository.GachaRepository
+import com.genshin.gachahelper.signin.SignInRepository
 import com.genshin.gachahelper.sync.GachaDataImporter
 import com.genshin.gachahelper.ui.theme.ThemeMode
 import com.genshin.gachahelper.ui.theme.ThemeRepository
@@ -36,6 +37,7 @@ class SettingsViewModel @Inject constructor(
     private val gachaDataImporter: GachaDataImporter,
     private val sessionEventBus: SessionEventBus,
     private val themeRepository: ThemeRepository,
+    private val signInRepository: SignInRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -52,6 +54,17 @@ class SettingsViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = ThemeMode.FOLLOW_SYSTEM
         )
+
+    /** 每日自动签到开关 */
+    val dailySignEnabled: StateFlow<Boolean> = signInRepository.enabledFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = false
+        )
+
+    /** 最近一次签到结果提示 */
+    val dailySignResult: StateFlow<String?> = signInRepository.lastResult.asStateFlow()
 
     init {
         // 监听全局会话事件：登录/退出/导入/清除后需重新 loadSettings
@@ -100,6 +113,22 @@ class SettingsViewModel @Inject constructor(
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             themeRepository.setThemeMode(mode)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 每日自动签到
+    // ------------------------------------------------------------------
+
+    /** 开关每日自动签到 */
+    fun setDailySignEnabled(enabled: Boolean) {
+        signInRepository.setEnabled(enabled)
+    }
+
+    /** 手动立即签到一次（不影响已排队的自动任务） */
+    fun manualDailySignIn() {
+        viewModelScope.launch {
+            signInRepository.performManualSignIn()
         }
     }
 

@@ -90,8 +90,8 @@ class MihoyoApiService @Inject constructor(
             "$PASSPORT_BASE/account/ma-cn-passport/app/queryQRLoginStatus"
 
         // 用 cookie_token 换 stoken（通行证 API，验证码/密码登录场景）
-        private const val API_GET_STOKEN_BY_COOKIE =
-            "$PASSPORT_BASE/account/auth/api/getAccountInfoByCookieToken"
+        // 注：该兑换接口在官方并不存在，已移除；
+        // H5 网页登录凭证（cookie_token_v2/ltoken_v2）可直接用于后续接口，无需兑换 stoken。
 
         // 通行证 app_id 和 client_type
         private const val PASSPORT_APP_ID = "ddxf5dufpuyo"
@@ -128,8 +128,8 @@ class MihoyoApiService @Inject constructor(
         // getTokenByGameToken 需要的 app_id（已废弃）
         private const val RPC_APP_ID = "bll8iq97cem8"
         // client_type=5（web 通用）
-        private const val CLIENT_TYPE_WEB = "5"
-        private const val CLIENT_TYPE_TOKEN = "4"
+        const val CLIENT_TYPE_WEB = "5"
+        const val CLIENT_TYPE_TOKEN = "4"
     }
 
     // ==================================================================
@@ -359,85 +359,6 @@ class MihoyoApiService @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // P3c. 用 cookie_token 换 stoken（passport API，验证码/密码登录场景）
-    // WebView 验证码/密码登录后只有 cookie_token + ltoken，没有 stoken，
-    // 但 genAuthKey 需要 stoken 才能通过（retcode -100），
-    // 所以需要用 cookie_token 再去通行证换一份 stoken。
-    // ------------------------------------------------------------------
-    suspend fun getStokenByCookieToken(
-        cookieToken: String,
-        uid: String,
-        mid: String?
-    ): ApiResult<String> = withContext(Dispatchers.IO) {
-        try {
-            val cookieStr = buildString {
-                append("cookie_token_v2=$cookieToken")
-                append("; stuid=$uid; ltuid=$uid")
-                if (!mid.isNullOrBlank()) append("; mid=$mid")
-            }
-
-            val request = Request.Builder()
-                .url(API_GET_STOKEN_BY_COOKIE)
-                .addHeader("Cookie", cookieStr)
-                .addHeader("User-Agent", PASSPORT_UA)
-                .addHeader("x-rpc-app_id", PASSPORT_APP_ID)
-                .addHeader("x-rpc-client_type", PASSPORT_CLIENT_TYPE)
-                .addHeader("x-rpc-device_id", authRepository.getOrCreateDeviceId())
-                .addHeader("Content-Type", "application/json")
-                .addHeader("Accept", "application/json")
-                .get()
-                .build()
-
-            val response = client.newCall(request).execute()
-            val respBody = response.body?.string() ?: ""
-
-            if (!response.isSuccessful) {
-                return@withContext ApiResult.Error("HTTP ${response.code}", response.code, respBody, "getStokenByCookie")
-            }
-
-            val json = JsonParser.parseString(respBody).asJsonObject
-            val retcode = json.get("retcode")?.asInt ?: -1
-            if (retcode != 0) {
-                val msg = json.get("message")?.asString ?: "未知错误"
-                return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "getStokenByCookie")
-            }
-
-            val data = json.getAsJsonObject("data")
-                ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "getStokenByCookie")
-
-            // 通行证返回结构可能有多层：
-            // 1. data.stoken 直接字段
-            // 2. data.tokens[] 数组（需按 name 过滤 stoken/stoken_v2，不能取第一个）
-            // 3. data.user_info.stoken / data.user_info.tokens
-            val stoken = data.get("stoken")?.asString
-                ?: data.getAsJsonArray("tokens")?.let { arr ->
-                    arr.firstOrNull { item ->
-                        val name = item.asJsonObject?.get("name")?.asString ?: ""
-                        name == "stoken" || name == "stoken_v2"
-                    }?.asJsonObject?.get("token")?.asString
-                }
-                ?: data.getAsJsonObject("user_info")?.get("stoken")?.asString
-                ?: data.getAsJsonObject("user_info")?.getAsJsonArray("tokens")?.firstOrNull {
-                    val name = it.asJsonObject?.get("name")?.asString ?: ""
-                    name == "stoken" || name == "stoken_v2"
-                }?.asJsonObject?.get("token")?.asString
-
-            if (stoken.isNullOrBlank()) {
-                return@withContext ApiResult.Error("响应中未找到 stoken", -1, respBody, "getStokenByCookie")
-            }
-
-            // 顺便提取 mid（可能也在响应里）
-            val responseMid = data.get("mid")?.asString
-                ?: data.getAsJsonObject("user_info")?.get("mid")?.asString
-                ?: mid
-
-            ApiResult.Success(stoken)
-        } catch (e: Exception) {
-            ApiResult.Error("用 cookie_token 换 stoken 异常: ${e.message}", -1, "", "getStokenByCookie")
-        }
-    }
-
-    // ------------------------------------------------------------------
     // 1. 获取二维码（无 DS，需 device_fp 防风控）
     // ------------------------------------------------------------------
     suspend fun fetchQrCode(): ApiResult<QrCodeData> = withContext(Dispatchers.IO) {
@@ -656,17 +577,20 @@ class MihoyoApiService @Inject constructor(
                 val obj = item.asJsonObject
                 val name = obj.get("name")?.asString ?: ""
                 val token = obj.get("token")?.asString ?: ""
-                when (name) {
-                    "stoken" -> stoken = token
-                    "ltoken" -> ltoken = token
+                // 兼容服务端下发 stoken_v2 / ltoken_v2 的情况（优先取第一个出现的值）
+                when {
+                    (name == "stoken" || name == "stoken_v2") && stoken == null -> stoken = token
+                    (name == "ltoken" || name == "ltoken_v2") && ltoken == null -> ltoken = token
                 }
             }
 
-            if (stoken.isNullOrBlank()) {
-                return@withContext ApiResult.Error("响应中未找到 stoken", -1, respBody, "multiToken")
+            // 官方自 2023 年起该接口只返回 ltoken，stoken 允许为空；
+            // 只要 ltoken 存在即视为成功（调用方按 stoken 有无走不同链路）。
+            if (stoken.isNullOrBlank() && ltoken.isNullOrBlank()) {
+                return@withContext ApiResult.Error("响应中未找到可用 token", -1, respBody, "multiToken")
             }
 
-            ApiResult.Success(MultiTokenInfo(stoken, ltoken ?: ""))
+            ApiResult.Success(MultiTokenInfo(stoken ?: "", ltoken ?: ""))
         } catch (e: Exception) {
             ApiResult.Error("换取 stoken 异常: ${e.message}", -1, "", "multiToken")
         }

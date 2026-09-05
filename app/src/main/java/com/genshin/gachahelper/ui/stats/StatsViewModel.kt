@@ -13,12 +13,14 @@ import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -94,54 +96,59 @@ class StatsViewModel @Inject constructor(
                     return@withLock
                 }
 
-                val characterRecords = gachaRepository.getRecordsByPool(
-                    account.id, GachaType.CHARACTER.value
-                )
-                val character2Records = gachaRepository.getRecordsByPool(
-                    account.id, GachaType.CHARACTER_2.value
-                )
-                val weaponRecords = gachaRepository.getRecordsByPool(
-                    account.id, GachaType.WEAPON.value
-                )
-                val standardRecords = gachaRepository.getRecordsByPool(
-                    account.id, GachaType.STANDARD.value
-                )
-                val noviceRecords = gachaRepository.getRecordsByPool(
-                    account.id, GachaType.NOVICE.value
-                )
-                val chronicledRecords = gachaRepository.getRecordsByPool(
-                    account.id, GachaType.CHRONICLED.value
-                )
+                // DB 拉取 + 全量统计计算放到后台线程，避免阻塞主线程导致页面卡顿。
+                val loaded = withContext(Dispatchers.Default) {
+                    val characterRecords = gachaRepository.getRecordsByPool(
+                        account.id, GachaType.CHARACTER.value
+                    )
+                    val character2Records = gachaRepository.getRecordsByPool(
+                        account.id, GachaType.CHARACTER_2.value
+                    )
+                    val weaponRecords = gachaRepository.getRecordsByPool(
+                        account.id, GachaType.WEAPON.value
+                    )
+                    val standardRecords = gachaRepository.getRecordsByPool(
+                        account.id, GachaType.STANDARD.value
+                    )
+                    val noviceRecords = gachaRepository.getRecordsByPool(
+                        account.id, GachaType.NOVICE.value
+                    )
+                    val chronicledRecords = gachaRepository.getRecordsByPool(
+                        account.id, GachaType.CHRONICLED.value
+                    )
 
-                val report = statsCalculator.generateReport(
-                    characterRecords = characterRecords,
-                    character2Records = character2Records,
-                    weaponRecords = weaponRecords,
-                    standardRecords = standardRecords,
-                    noviceRecords = noviceRecords,
-                    chronicledRecords = chronicledRecords
-                )
+                    val report = statsCalculator.generateReport(
+                        characterRecords = characterRecords,
+                        character2Records = character2Records,
+                        weaponRecords = weaponRecords,
+                        standardRecords = standardRecords,
+                        noviceRecords = noviceRecords,
+                        chronicledRecords = chronicledRecords
+                    )
 
-                // 额外加载时间轴 / 图鉴 / 日历三组数据
-                val fiveStarTimeline = buildFiveStarTimeline(
-                    characterRecords = characterRecords,
-                    character2Records = character2Records,
-                    weaponRecords = weaponRecords,
-                    standardRecords = standardRecords,
-                    noviceRecords = noviceRecords,
-                    chronicledRecords = chronicledRecords
-                )
-                val itemCollection = gachaRepository.getItemCollection(account.id)
-                val dailyStats = gachaRepository.getDailyStats(account.id)
+                    // 额外加载时间轴 / 图鉴 / 日历三组数据
+                    val fiveStarTimeline = buildFiveStarTimeline(
+                        characterRecords = characterRecords,
+                        character2Records = character2Records,
+                        weaponRecords = weaponRecords,
+                        standardRecords = standardRecords,
+                        noviceRecords = noviceRecords,
+                        chronicledRecords = chronicledRecords
+                    )
+                    val itemCollection = gachaRepository.getItemCollection(account.id)
+                    val dailyStats = gachaRepository.getDailyStats(account.id)
 
-                _uiState.value = StatsUiState(
-                    report = report,
-                    isLoading = false,
-                    hasData = report.totalPulls > 0,
-                    fiveStarTimeline = fiveStarTimeline,
-                    itemCollection = itemCollection,
-                    dailyStats = dailyStats
-                )
+                    StatsUiState(
+                        report = report,
+                        isLoading = false,
+                        hasData = report.totalPulls > 0,
+                        fiveStarTimeline = fiveStarTimeline,
+                        itemCollection = itemCollection,
+                        dailyStats = dailyStats
+                    )
+                }
+
+                _uiState.value = loaded
             }
         }
     }

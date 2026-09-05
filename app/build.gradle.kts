@@ -23,8 +23,8 @@ android {
         applicationId = "com.genshin.gachahelper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "1.7.0"
+        versionCode = 22
+        versionName = "1.7.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -101,6 +101,10 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
+    implementation(libs.hilt.work)
+
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Network
     implementation(libs.retrofit)

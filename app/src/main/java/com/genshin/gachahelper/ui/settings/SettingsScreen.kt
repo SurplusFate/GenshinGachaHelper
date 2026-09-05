@@ -1,5 +1,7 @@
 package com.genshin.gachahelper.ui.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,14 +14,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -30,9 +35,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.genshin.gachahelper.ui.theme.ThemeMode
 
@@ -41,6 +48,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     val importMessage by viewModel.importMessage.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
+    val dailySignEnabled by viewModel.dailySignEnabled.collectAsState()
+    val dailySignResult by viewModel.dailySignResult.collectAsState()
     var showClearDataDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
@@ -51,9 +60,25 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         uri?.let { viewModel.importGachaData(it) }
     }
 
+    // Android 13+ 通知权限申请（仅用于展示签到结果，未授权不影响签到）
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* 授权结果不阻塞流程 */ }
+    fun requestNotificationPermissionIfNeeded() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -138,6 +163,51 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                     selected = themeMode == ThemeMode.DARK,
                     onClick = { viewModel.setThemeMode(ThemeMode.DARK) }
                 )
+            }
+        }
+
+        // 每日签到
+        SettingsSection(title = "每日签到") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "米游社每日自动签到",
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "北京时间每天 08:00 自动执行（需保持登录）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = dailySignEnabled,
+                    onCheckedChange = { enabled ->
+                        viewModel.setDailySignEnabled(enabled)
+                        if (enabled) requestNotificationPermissionIfNeeded()
+                    }
+                )
+            }
+            dailySignResult?.let { result ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = result,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (dailySignEnabled) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { viewModel.manualDailySignIn() },
+                    enabled = uiState.isLoggedIn,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("立即签到一次")
+                }
             }
         }
 

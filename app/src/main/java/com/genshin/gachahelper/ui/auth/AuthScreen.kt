@@ -27,6 +27,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,6 +63,23 @@ fun AuthScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().wishSkyBackground()) {
+        // 登录方式切换（仅在可交互的登录/等待阶段显示；换取、选角色、完成阶段隐藏，
+        // 避免用户中途切换打断正在进行的登录流程）
+        val showMethodSwitcher = uiState.phase == AuthPhase.LOADING ||
+            uiState.phase == AuthPhase.QR_DISPLAY ||
+            uiState.phase == AuthPhase.QR_SCANNED ||
+            uiState.phase == AuthPhase.WEBVIEW_LOGIN
+        if (showMethodSwitcher) {
+            LoginMethodSwitcher(
+                selected = uiState.loginMethod,
+                onSelect = { method ->
+                    when (method) {
+                        LoginMethod.QR_CODE -> viewModel.switchToQrCode()
+                        LoginMethod.WEBVIEW -> viewModel.switchToWebView()
+                    }
+                }
+            )
+        }
         Box(modifier = Modifier.weight(1f)) {
             when (uiState.phase) {
                 AuthPhase.LOADING -> LoadingView(uiState.statusText)
@@ -95,6 +114,25 @@ fun AuthScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun LoginMethodSwitcher(
+    selected: LoginMethod,
+    onSelect: (LoginMethod) -> Unit
+) {
+    TabRow(selectedTabIndex = if (selected == LoginMethod.WEBVIEW) 1 else 0) {
+        Tab(
+            selected = selected == LoginMethod.QR_CODE,
+            onClick = { onSelect(LoginMethod.QR_CODE) },
+            text = { Text("扫码登录", style = MaterialTheme.typography.bodyMedium) }
+        )
+        Tab(
+            selected = selected == LoginMethod.WEBVIEW,
+            onClick = { onSelect(LoginMethod.WEBVIEW) },
+            text = { Text("账号密码/验证码", style = MaterialTheme.typography.bodyMedium) }
+        )
     }
 }
 

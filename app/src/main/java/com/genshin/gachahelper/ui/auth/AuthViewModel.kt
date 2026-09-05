@@ -344,33 +344,38 @@ class AuthViewModel @Inject constructor(
             try {
                 // 确保 Cookie 同步完成
                 CookieManager.getInstance().flush()
-                // 增加延时，确保 WebView 内所有 cookie（stoken_v2 / login_ticket 等）都已落盘
-                delay(1500)
 
-                val cookieManager = CookieManager.getInstance()
-                // 从多个域名读取 cookie 并合并，避免因 CookieManager 域名匹配规则不同
-                // 而漏掉 stoken_v2 / login_ticket 等关键凭证。
-                val domains = listOf(
-                    "https://user.mihoyo.com",
-                    "https://.mihoyo.com",
-                    "https://mihoyo.com",
-                    "https://api-takumi.mihoyo.com"
-                )
-                val cookieMap = mutableMapOf<String, String>()
-                val cookieStringBuilder = StringBuilder()
-                for (domain in domains) {
-                    val raw = cookieManager.getCookie(domain) ?: continue
-                    if (raw.isBlank()) continue
-                    cookieStringBuilder.append(raw).append("; ")
-                    val domainMap = parseCookies(raw)
-                    for ((key, value) in domainMap) {
-                        // 合并策略：保留非空值，已存在非空值时不覆盖
-                        if (value.isNotBlank() && cookieMap[key].isNullOrBlank()) {
-                            cookieMap[key] = value
-                        }
+                // 登录成功后 H5 页面跳转与 cookie 写入存在时间差，固定延时容易过早读取。
+                // 改为轮询等待关键凭证落盘：直到同时出现"账号标识(ltuid)"与至少一种可用
+                // token（stoken/login_ticket/cookie_token/ltoken），或超过 12 秒兜底。
+                var cookieMap = emptyMap<String, String>()
+                var cookies = ""
+                val deadline = System.currentTimeMillis() + 12_000
+                var waitRound = 0
+                while (true) {
+                    waitRound++
+                    val snapshot = withContext(Dispatchers.IO) {
+                        readAllCookiesSnapshot()
                     }
+                    cookieMap = snapshot.first
+                    cookies = snapshot.second
+                    val hasUid = cookieMap.keys.any { key ->
+                        key == "ltuid_v2" || key == "ltuid" ||
+                            key == "account_id_v2" || key == "account_id"
+                    }
+                    val hasToken = cookieMap.keys.any { key ->
+                        key == "stoken_v2" || key == "stoken" ||
+                            key == "login_ticket" ||
+                            key == "cookie_token_v2" || key == "cookie_token" ||
+                            key == "ltoken_v2" || key == "ltoken"
+                    }
+                    if ((hasUid && hasToken) || System.currentTimeMillis() >= deadline) break
+                    setState {
+                        copy(debugInfo = "等待登录凭证写入（第 $waitRound 次）...\n" +
+                            "当前 key: ${cookieMap.keys.joinToString(", ")}")
+                    }
+                    delay(500)
                 }
-                val cookies = cookieStringBuilder.toString()
 
                 val loginTicket = cookieMap["login_ticket"]
                 val stokenV2 = cookieMap["stoken_v2"] ?: cookieMap["stoken"]
@@ -475,50 +480,34 @@ class AuthViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            // 用 cookie_token 换 stoken：genAuthKey 需要包含 stoken 的 Cookie，
-            // 否则会返回 -100（登录状态失效）。
-            // 如果兑换失败，直接终止流程并提示用户改用扫码登录，
-            // 而不是继续走 buildCookieString（无 stoken → genAuthKey 必失败）。
-            var swappedStoken: String? = null
-            if (!cookieToken.isNullOrBlank()) {
-                setState { copy(statusText = "正在换取 stoken...") }
-                when (val r = mihoyoApi.getStokenByCookieToken(cookieToken, ltuid, mid)) {
-                    is ApiResult.Success -> {
-                        swappedStoken = r.data
-                        setState {
-                            copy(debugInfo = (uiState.value.debugInfo
-                                ?: "") + "\nstoken 兑换成功（使用 cookie_token_v2）")
-                        }
-                    }
-                    is ApiResult.Error -> {
-                        // stoken 兑换失败 → genAuthKey 一定失败，不继续
-                        setState {
-                            copy(
-                                phase = AuthPhase.WEBVIEW_LOGIN,
-                                statusText = "",
-                                error = "无法获取 stoken 凭证（${r.message}）。\n" +
-                                    "genAuthKey 需要 stoken，请改用扫码登录。",
-                                debugInfo = (uiState.value.debugInfo ?: "") +
-                                    "\nstoken 兑换失败：${r.message}" +
-                                    "\n原始响应：${r.rawResponse.take(300)}" +
-                                    "\n\n提示：扫码登录可直接获取 stoken，推荐使用。"
-                            )
-                        }
-                        return@launch
-                    }
+            // ===== 2026-09 修复：网页登录链路不再兑换 stoken =====
+            // 之前这里调用 getAccountInfoByCookieToken 用 cookie_token 换 stoken，
+            // 该接口在官方并不存在（passport-api 实测 HTTP 404）；
+            // login_ticket 换 stoken 的 getMultiTokenByLoginTicket 官方也已不再返回 stoken。
+            // 网页验证码/密码登录下发的凭证本来就只有 cookie_token_v2 + ltoken_v2 + ltuid + mid，
+            // 官方网页版功能（含抽卡分析）就是用这组凭证生成 authkey，并不依赖 stoken。
+            // 因此直接保存网页凭证（无 stoken）进入角色获取阶段；
+            // 若个别场景服务端仍要求 stoken（genAuthKey 返回 -100），
+            // 下方 fetchGameRoles / selectRole 会以明确错误呈现，引导改用扫码登录。
+            if (cookieToken.isNullOrBlank() && ltoken.isNullOrBlank()) {
+                setState {
+                    copy(
+                        phase = AuthPhase.WEBVIEW_LOGIN,
+                        statusText = "",
+                        error = "未检测到可用登录凭证（cookie_token/ltoken 均为空）。\n请退出账号后重新登录，或改用扫码登录（推荐）。",
+                        debugInfo = (uiState.value.debugInfo ?: "") + "\n缺少 cookie_token 与 ltoken"
+                    )
                 }
+                return@launch
             }
-
-            // stoken 兑换成功 → 保存完整凭证（和扫码登录产出同构）
-            authRepository.saveLoginCredentials(
-                stoken = swappedStoken!!,
+            authRepository.saveWebViewCredentials(
                 ltuid = ltuid,
                 mid = mid,
                 cookieToken = cookieToken,
                 ltoken = ltoken
             )
 
-            // 直接尝试获取游戏角色来验证凭证是否有效
+            setState { copy(statusText = "正在获取游戏角色...") }            // 直接尝试获取游戏角色来验证凭证是否有效
             // getGameRoles 内部会调用 buildCookieString() 组装 cookie
             setState { copy(statusText = "正在获取游戏角色...") }
             fetchGameRoles()
@@ -541,6 +530,33 @@ class AuthViewModel @Inject constructor(
         when (val result = mihoyoApi.getMultiTokenByLoginTicket(loginTicket, uid)) {
             is ApiResult.Success -> {
                 val tokenInfo = result.data
+
+                // ===== 2026-09 修复：login_ticket 可能换不到 stoken =====
+                // 官方 getMultiTokenByLoginTicket 自 2023 年起只返回 ltoken，stoken 不再下发。
+                // stoken 为空时与方案3同构：直接保存网页凭证进入角色获取，不再强制 stoken。
+                if (tokenInfo.stoken.isBlank()) {
+                    if (cookieToken.isNullOrBlank() && tokenInfo.ltoken.isBlank()) {
+                        setState {
+                            copy(
+                                phase = AuthPhase.WEBVIEW_LOGIN,
+                                statusText = "",
+                                error = "换取登录凭证失败：login_ticket 已失效，未获得可用凭证。\n请返回重新登录，或改用扫码登录。",
+                                debugInfo = "getMultiTokenByLoginTicket 响应：\n${result.data}"
+                            )
+                        }
+                        return
+                    }
+                    authRepository.saveWebViewCredentials(
+                        ltuid = uid,
+                        mid = mid,
+                        cookieToken = cookieToken,
+                        ltoken = tokenInfo.ltoken.ifBlank { null }
+                    )
+                    setState { copy(statusText = "正在获取游戏角色...") }
+                    fetchGameRoles()
+                    return
+                }
+
                 // 拿到真正的 stoken 后走与扫码一致的链路：
                 // savePassportCredentialsAndFetchRoles 会再换 cookie_token + ltoken
                 // （cookie_token 是 getUserGameRolesByCookie 必需的，ltoken 是 generateAuthKey 的保险）
@@ -726,6 +742,41 @@ class AuthViewModel @Inject constructor(
 
     fun clearError() {
         setState { copy(error = null) }
+    }
+
+    // 从多个域名读取 cookie 并合并，避免因 CookieManager 域名匹配规则不同
+    // 而漏掉 stoken_v2 / login_ticket 等关键凭证。返回 (合并后的 key-value 表, 原始串)。
+    // 域名覆盖米游社旧域 .mihoyo.com 与新版 .miyoushe.com，以及 passport/登录 H5 域。
+    private fun readAllCookiesSnapshot(): Pair<Map<String, String>, String> {
+        val cookieManager = CookieManager.getInstance()
+        val domains = listOf(
+            "https://user.mihoyo.com",
+            "https://account.mihoyo.com",
+            "https://passport-api.mihoyo.com",
+            "https://webapi.account.mihoyo.com",
+            "https://api-account.mihoyo.com",
+            "https://bbs-api.mihoyo.com",
+            "https://.mihoyo.com",
+            "https://mihoyo.com",
+            "https://api-takumi.mihoyo.com",
+            "https://api-takumi.miyoushe.com",
+            "https://user.miyoushe.com"
+        )
+        val cookieMap = mutableMapOf<String, String>()
+        val cookieStringBuilder = StringBuilder()
+        for (domain in domains) {
+            val raw = cookieManager.getCookie(domain) ?: continue
+            if (raw.isBlank()) continue
+            cookieStringBuilder.append(raw).append("; ")
+            val domainMap = parseCookies(raw)
+            for ((key, value) in domainMap) {
+                // 合并策略：保留非空值，已存在非空值时不覆盖
+                if (value.isNotBlank() && cookieMap[key].isNullOrBlank()) {
+                    cookieMap[key] = value
+                }
+            }
+        }
+        return cookieMap to cookieStringBuilder.toString()
     }
 
     private fun parseCookies(cookieString: String): Map<String, String> {

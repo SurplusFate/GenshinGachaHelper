@@ -14,12 +14,14 @@ import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.sync.GachaSyncService
 import com.genshin.gachahelper.sync.SyncState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class HomeUiState(
@@ -122,93 +124,82 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 一次性生成全量统计报告（含各池 PoolStats）的临时装载器。
+     * 用于避免 [statsCalculator] 的重复全量计算全部叠加在主线程上。
+     */
+    private data class StatsLoadResult(
+        val report: GachaReport?,
+        val recentFiveStars: List<GachaRecordEntity>,
+        val recentFiveStarIntervals: List<Int>,
+        val hasData: Boolean
+    )
+
     private suspend fun loadStats(accountId: Long) {
-        // 加载各卡池记录并计算统计（包含角色活动祈愿-2 和集录祈愿）
-        val characterRecords = gachaRepository.getRecordsByPool(
-            accountId, GachaType.CHARACTER.value
-        )
-        val character2Records = gachaRepository.getRecordsByPool(
-            accountId, GachaType.CHARACTER_2.value
-        )
-        val weaponRecords = gachaRepository.getRecordsByPool(
-            accountId, GachaType.WEAPON.value
-        )
-        val standardRecords = gachaRepository.getRecordsByPool(
-            accountId, GachaType.STANDARD.value
-        )
-        val chronicledRecords = gachaRepository.getRecordsByPool(
-            accountId, GachaType.CHRONICLED.value
-        )
-        val noviceRecords = gachaRepository.getRecordsByPool(
-            accountId, GachaType.NOVICE.value
-        )
-
-        val characterStats = if (characterRecords.isNotEmpty()) {
-            statsCalculator.calculatePoolStats(
-                characterRecords, GachaType.CHARACTER.value,
-                sharedPityRecords = character2Records
+        // DB 拉取与全量统计均在后台线程执行，避免数万条记录排序/分组阻塞主线程。
+        val result = withContext(Dispatchers.Default) {
+            // 加载各卡池记录并计算统计（包含角色活动祈愿-2 和集录祈愿）
+            val characterRecords = gachaRepository.getRecordsByPool(
+                accountId, GachaType.CHARACTER.value
             )
-        } else null
-
-        val character2Stats = if (character2Records.isNotEmpty()) {
-            statsCalculator.calculatePoolStats(
-                character2Records, GachaType.CHARACTER_2.value,
-                sharedPityRecords = characterRecords
+            val character2Records = gachaRepository.getRecordsByPool(
+                accountId, GachaType.CHARACTER_2.value
             )
-        } else null
+            val weaponRecords = gachaRepository.getRecordsByPool(
+                accountId, GachaType.WEAPON.value
+            )
+            val standardRecords = gachaRepository.getRecordsByPool(
+                accountId, GachaType.STANDARD.value
+            )
+            val chronicledRecords = gachaRepository.getRecordsByPool(
+                accountId, GachaType.CHRONICLED.value
+            )
+            val noviceRecords = gachaRepository.getRecordsByPool(
+                accountId, GachaType.NOVICE.value
+            )
 
-        val weaponStats = if (weaponRecords.isNotEmpty()) {
-            statsCalculator.calculatePoolStats(weaponRecords, GachaType.WEAPON.value)
-        } else null
+            // 生成全局报告（内部一次性算出各池 PoolStats，UI 层禁止重复调用计算器）
+            val report = statsCalculator.generateReport(
+                characterRecords = characterRecords,
+                character2Records = character2Records,
+                weaponRecords = weaponRecords,
+                standardRecords = standardRecords,
+                noviceRecords = noviceRecords,
+                chronicledRecords = chronicledRecords
+            )
 
-        val standardStats = if (standardRecords.isNotEmpty()) {
-            statsCalculator.calculatePoolStats(standardRecords, GachaType.STANDARD.value)
-        } else null
+            val hasAnyData = report.totalPulls > 0
 
-        val chronicledStats = if (chronicledRecords.isNotEmpty()) {
-            statsCalculator.calculatePoolStats(chronicledRecords, GachaType.CHRONICLED.value)
-        } else null
+            // 加载最近五星记录（最多 10 条），并计算每条五星距上一个五星的出金间隔
+            val poolRecords = mapOf(
+                GachaType.CHARACTER.value to characterRecords,
+                GachaType.CHARACTER_2.value to character2Records,
+                GachaType.WEAPON.value to weaponRecords,
+                GachaType.STANDARD.value to standardRecords,
+                GachaType.NOVICE.value to noviceRecords,
+                GachaType.CHRONICLED.value to chronicledRecords
+            )
+            val recentWithIntervals = loadRecentFiveStars(accountId, poolRecords)
 
-        val noviceStats = if (noviceRecords.isNotEmpty()) {
-            statsCalculator.calculatePoolStats(noviceRecords, GachaType.NOVICE.value)
-        } else null
-
-        val hasAnyData = characterStats != null || character2Stats != null ||
-                weaponStats != null || standardStats != null ||
-                noviceStats != null || chronicledStats != null
-
-        // 生成全局报告（UI 层直接使用报告中的平均值等指标，禁止自行计算）
-        val report = statsCalculator.generateReport(
-            characterRecords = characterRecords,
-            character2Records = character2Records,
-            weaponRecords = weaponRecords,
-            standardRecords = standardRecords,
-            noviceRecords = noviceRecords,
-            chronicledRecords = chronicledRecords
-        )
-
-        // 加载最近五星记录（最多 10 条），并计算每条五星距上一个五星的出金间隔
-        val poolRecords = mapOf(
-            GachaType.CHARACTER.value to characterRecords,
-            GachaType.CHARACTER_2.value to character2Records,
-            GachaType.WEAPON.value to weaponRecords,
-            GachaType.STANDARD.value to standardRecords,
-            GachaType.NOVICE.value to noviceRecords,
-            GachaType.CHRONICLED.value to chronicledRecords
-        )
-        val recentWithIntervals = loadRecentFiveStars(accountId, poolRecords)
+            StatsLoadResult(
+                report = report,
+                recentFiveStars = recentWithIntervals.map { it.first },
+                recentFiveStarIntervals = recentWithIntervals.map { it.second },
+                hasData = hasAnyData
+            )
+        }
 
         _uiState.value = _uiState.value.copy(
-            characterStats = characterStats,
-            character2Stats = character2Stats,
-            weaponStats = weaponStats,
-            standardStats = standardStats,
-            noviceStats = noviceStats,
-            chronicledStats = chronicledStats,
-            recentFiveStars = recentWithIntervals.map { it.first },
-            recentFiveStarIntervals = recentWithIntervals.map { it.second },
-            report = report,
-            hasData = hasAnyData,
+            characterStats = result.report?.characterPoolStats,
+            character2Stats = result.report?.character2PoolStats,
+            weaponStats = result.report?.weaponPoolStats,
+            standardStats = result.report?.standardPoolStats,
+            noviceStats = result.report?.novicePoolStats,
+            chronicledStats = result.report?.chronicledPoolStats,
+            recentFiveStars = result.recentFiveStars,
+            recentFiveStarIntervals = result.recentFiveStarIntervals,
+            report = result.report,
+            hasData = result.hasData,
             isLoading = false
         )
     }
