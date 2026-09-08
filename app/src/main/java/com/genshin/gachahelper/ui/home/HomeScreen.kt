@@ -1,7 +1,11 @@
 package com.genshin.gachahelper.ui.home
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -392,27 +396,21 @@ private fun HeroStat(
 
 @Composable
 private fun LuckRing(score: Int) {
-    val animatedScore by animateFloatAsState(targetValue = score.toFloat(), label = "luck")
+    val animatedScore = remember { Animatable(0f) }
+    LaunchedEffect(score) {
+        animatedScore.snapTo(0f)
+        animatedScore.animateTo(score.toFloat(), tween(1200, easing = FastOutSlowInEasing))
+    }
+
     val gold = wishAccentGold()
     val trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f)
     val reduceMotion = rememberReduceMotion()
-    val breath = remember { Animatable(1f) }
-    LaunchedEffect(reduceMotion) {
-        if (reduceMotion) {
-            breath.snapTo(1f)
-            return@LaunchedEffect
-        }
-        while (true) {
-            breath.animateTo(0.6f, tween(1000))
-            breath.animateTo(1.0f, tween(1000))
-        }
-    }
 
     Box(
         modifier = Modifier.size(80.dp),
         contentAlignment = Alignment.Center
     ) {
-        // 轨道环：静态，仅绘制一次，不随呼吸动画重绘
+        // 轨道环：静态，仅绘制一次，不随动画重绘
         Canvas(modifier = Modifier.fillMaxSize()) {
             val stroke = 6.dp.toPx()
             drawArc(
@@ -423,22 +421,23 @@ private fun LuckRing(score: Int) {
                 style = Stroke(width = stroke)
             )
         }
-        // 金色进度弧：呼吸透明度走 graphicsLayer 硬件合成，
-        // 避免每帧触发 Canvas drawArc 的 CPU 重绘（呼吸 2s 循环的主要掉帧点）
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = breath.value }
-        ) {
+        // 进度弧：入场时弧长从 0 生长到目标分对应角度，动画结束后静止
+        Canvas(modifier = Modifier.fillMaxSize()) {
             val stroke = 6.dp.toPx()
-            val sweep = 360f * animatedScore / 100f
-            drawArc(
-                color = gold,
-                startAngle = -90f,
-                sweepAngle = sweep,
-                useCenter = false,
-                style = Stroke(width = stroke, cap = StrokeCap.Round)
-            )
+            val sweep = 360f * animatedScore.value.coerceIn(0f, 100f) / 100f
+            if (sweep > 0f) {
+                drawArc(
+                    color = gold,
+                    startAngle = -90f,
+                    sweepAngle = sweep,
+                    useCenter = false,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+                )
+            }
+        }
+        // 流光层：Canvas 内容固定，动画只改 graphicsLayer.rotationZ → 硬件合成、零重绘
+        if (!reduceMotion) {
+            LuckRingScan(gold = gold)
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
@@ -454,6 +453,56 @@ private fun LuckRing(score: Int) {
                 fontSize = 10.sp
             )
         }
+    }
+}
+
+/** 运气环流光高光：彗尾式亮段沿整环匀速旋转，只更新图层旋转角，不掉帧 */
+@Composable
+private fun LuckRingScan(gold: Color) {
+    val transition = rememberInfiniteTransition(label = "luckScan")
+    val angle by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing)),
+        label = "scanAngle"
+    )
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer { rotationZ = angle }
+    ) {
+        val stroke = 8.dp.toPx()
+        // 渐隐尾迹
+        drawArc(
+            color = gold.copy(alpha = 0.18f),
+            startAngle = -75f,
+            sweepAngle = 160f,
+            useCenter = false,
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
+        drawArc(
+            color = gold.copy(alpha = 0.4f),
+            startAngle = -50f,
+            sweepAngle = 105f,
+            useCenter = false,
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
+        // 亮头
+        drawArc(
+            color = gold.copy(alpha = 0.9f),
+            startAngle = -22f,
+            sweepAngle = 44f,
+            useCenter = false,
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
+        // 白热核心
+        drawArc(
+            color = Color.White.copy(alpha = 0.85f),
+            startAngle = -10f,
+            sweepAngle = 20f,
+            useCenter = false,
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
     }
 }
 
