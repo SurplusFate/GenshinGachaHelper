@@ -71,6 +71,7 @@ import com.genshin.gachahelper.ui.theme.WishEmptyGlow
 import com.genshin.gachahelper.ui.theme.WishShapes
 import com.genshin.gachahelper.ui.theme.wishDivider
 import com.genshin.gachahelper.ui.theme.wishSuccess
+import com.genshin.gachahelper.ui.theme.wishOnPrimaryFill
 import com.genshin.gachahelper.ui.theme.wishTextHigh
 import com.genshin.gachahelper.ui.theme.wishTextMid
 import kotlinx.coroutines.launch
@@ -296,22 +297,23 @@ private fun OverviewContent(report: GachaReport, navController: NavController) {
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
+                val onFill = wishOnPrimaryFill()
                 Text(
                     text = "累计抽卡",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    color = onFill.copy(alpha = 0.8f)
                 )
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         text = "${report.totalPulls}",
                         style = MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = onFill
                     )
                     Text(
                         text = " 抽",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                        color = onFill.copy(alpha = 0.8f),
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
@@ -324,11 +326,14 @@ private fun OverviewContent(report: GachaReport, navController: NavController) {
                         label = "五星总数",
                         value = "${report.totalFiveStars}",
                         valueColor = FiveStarColor,
+                        labelColor = onFill.copy(alpha = 0.8f),
                         modifier = Modifier.weight(1f)
                     )
                     StatMini(
                         label = "平均出金",
                         value = "${String.format("%.1f", report.avgPullsPerFiveStar)} 抽",
+                        valueColor = onFill,
+                        labelColor = onFill.copy(alpha = 0.8f),
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -965,13 +970,14 @@ fun StatMini(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    valueColor: Color = MaterialTheme.colorScheme.onSurface
+    valueColor: Color = MaterialTheme.colorScheme.onSurface,
+    labelColor: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
     Column(modifier = modifier) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = labelColor
         )
         Text(
             text = value,

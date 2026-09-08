@@ -44,6 +44,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -394,6 +395,7 @@ private fun LuckRing(score: Int) {
         modifier = Modifier.size(80.dp),
         contentAlignment = Alignment.Center
     ) {
+        // 轨道环：静态，仅绘制一次，不随呼吸动画重绘
         Canvas(modifier = Modifier.fillMaxSize()) {
             val stroke = 6.dp.toPx()
             drawArc(
@@ -403,9 +405,18 @@ private fun LuckRing(score: Int) {
                 useCenter = false,
                 style = Stroke(width = stroke)
             )
+        }
+        // 金色进度弧：呼吸透明度走 graphicsLayer 硬件合成，
+        // 避免每帧触发 Canvas drawArc 的 CPU 重绘（呼吸 2s 循环的主要掉帧点）
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = breath.value }
+        ) {
+            val stroke = 6.dp.toPx()
             val sweep = 360f * animatedScore / 100f
             drawArc(
-                color = gold.copy(alpha = breath.value),
+                color = gold,
                 startAngle = -90f,
                 sweepAngle = sweep,
                 useCenter = false,

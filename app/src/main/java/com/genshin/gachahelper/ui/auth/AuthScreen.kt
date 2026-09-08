@@ -50,6 +50,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.genshin.gachahelper.auth.GameRole
 import com.genshin.gachahelper.ui.theme.WishShapes
+import com.genshin.gachahelper.ui.theme.wishOnPrimaryFill
 import com.genshin.gachahelper.ui.theme.wishSkyBackground
 import com.google.accompanist.web.AccompanistWebViewClient
 import com.google.accompanist.web.WebView
@@ -441,7 +442,7 @@ fun ScannedView(
                 Text(
                     text = statusText.ifBlank { "已扫描，请在米游社中确认登录" },
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = wishOnPrimaryFill(),
                     textAlign = TextAlign.Center
                 )
             }

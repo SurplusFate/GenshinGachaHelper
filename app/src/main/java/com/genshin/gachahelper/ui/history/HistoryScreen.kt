@@ -59,6 +59,7 @@ import com.genshin.gachahelper.ui.theme.ThreeStarColor
 import com.genshin.gachahelper.ui.theme.WishEmptyGlow
 import com.genshin.gachahelper.ui.theme.WishShapes
 import com.genshin.gachahelper.ui.theme.rarityColor
+import com.genshin.gachahelper.ui.theme.wishOnPrimaryFill
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -311,7 +312,7 @@ fun FilterChips(
                     label = { Text("全部", style = MaterialTheme.typography.labelMedium) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        selectedLabelColor = wishOnPrimaryFill()
                     )
                 )
             }
@@ -327,7 +328,7 @@ fun FilterChips(
                     },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        selectedLabelColor = wishOnPrimaryFill()
                     )
                 )
             }
@@ -347,7 +348,7 @@ fun FilterChips(
                     label = { Text("全部", style = MaterialTheme.typography.labelMedium) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        selectedLabelColor = wishOnPrimaryFill()
                     )
                 )
             }
@@ -359,7 +360,7 @@ fun FilterChips(
                         Text(
                             text = "五星",
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (filter.rarity == 5) MaterialTheme.colorScheme.onPrimaryContainer
+                            color = if (filter.rarity == 5) wishOnPrimaryFill()
                             else FiveStarColor
                         )
                     },
@@ -377,7 +378,7 @@ fun FilterChips(
                         Text(
                             text = "四星",
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (filter.rarity == 4) MaterialTheme.colorScheme.onPrimaryContainer
+                            color = if (filter.rarity == 4) wishOnPrimaryFill()
                             else FourStarColor
                         )
                     },
@@ -395,7 +396,7 @@ fun FilterChips(
                         Text(
                             text = "三星",
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (filter.rarity == 3) MaterialTheme.colorScheme.onPrimaryContainer
+                            color = if (filter.rarity == 3) wishOnPrimaryFill()
                             else ThreeStarColor
                         )
                     },

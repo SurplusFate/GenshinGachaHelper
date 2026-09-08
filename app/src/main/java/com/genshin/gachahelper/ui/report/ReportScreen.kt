@@ -31,6 +31,7 @@ import com.genshin.gachahelper.analysis.GachaReport
 import com.genshin.gachahelper.ui.theme.FiveStarColor
 import com.genshin.gachahelper.ui.theme.WishEmptyGlow
 import com.genshin.gachahelper.ui.theme.WishShapes
+import com.genshin.gachahelper.ui.theme.wishOnPrimaryFill
 
 @Composable
 fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
@@ -76,13 +77,13 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                                 text = "旅行者抽卡报告",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = wishOnPrimaryFill()
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Genshin Gacha Helper",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = wishOnPrimaryFill().copy(alpha = 0.8f)
                             )
                         }
                     }
