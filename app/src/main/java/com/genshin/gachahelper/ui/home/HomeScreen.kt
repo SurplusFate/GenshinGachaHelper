@@ -321,19 +321,36 @@ private fun HeroLuckCard(uiState: HomeUiState) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                LuckRing(score = luckScore)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = luckVerdict,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Text(
-                    text = "运气指数 $luckScore · ${luckConfidence.displayName}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                )
+                if (totalFiveStars > 0) {
+                    LuckRing(score = luckScore)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = luckVerdict,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "运气指数 $luckScore · ${luckConfidence.displayName}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                    )
+                } else {
+                    // 空态：没有五星时不渲染 0 分运气环，避免误导为"0 分非酋本酋"
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        text = "暂无数据",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.4f)
+                    )
+                    Text(
+                        text = "出金后生成运气分析",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
             }
         }
         }
@@ -903,10 +920,18 @@ private fun rememberFiveStarGlow(play: Boolean): Float {
     return alpha.value
 }
 
+/**
+ * 运气分文案。
+ *
+ * 语义：运气分 = P(理论概率模型下出金抽数 > 你的抽数) × 100，
+ * 即"模型下比你更非的比例"——对比对象是官方概率生成的理想分布，
+ * 不是全服/真实玩家数据库。文案因此使用"模型预期"措辞，
+ * 避免用户误读为"与全服玩家比"。
+ */
 private fun luckVerdictText(score: Int): String = when {
-    score >= 80 -> "运气爆棚"
-    score >= 65 -> "运气还不错"
-    score >= 50 -> "运气一般般"
-    score >= 35 -> "运气有点差"
-    else -> "是非酋本酋"
+    score >= 90 -> "远超模型预期"
+    score >= 70 -> "优于模型预期"
+    score >= 45 -> "与模型预期相近"
+    score >= 25 -> "低于模型预期"
+    else -> "远低于模型预期"
 }

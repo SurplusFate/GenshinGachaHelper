@@ -47,10 +47,19 @@ object GachaProbabilityModel {
 
     private val standardConfig = characterConfig
     private val chronicledConfig = characterConfig
+
+    /**
+     * 新手池：无软保底、无硬保底，五星基础概率 0.6%（官方仅披露基础概率）。
+     * 真实规则：首次十连必得诺艾尔，最多 20 抽后池子关闭（20 是池容量，不是五星保底）。
+     * 因此 observable 的五星间隔天然 ≤20，概率为 0.6% 的几何分布截断。
+     * 配置说明：hardPity=21 仅为让第 20 抽不被模型误判为"必出"（旧配置 hardPity=20
+     * 会把第 20 抽强制 100%，造成"19 抽未出评 100 分、20 抽必出评 0 分"的双重错误）。
+     * 21 抽在现实中不存在，仅作为分布归一化边界，不影响 ≤20 抽的几何概率。
+     */
     private val noviceConfig = PityConfig(
-        hardPity = 20,
-        baseRate = 0.0, // 新手池无五星保底概念
-        softPityStart = 20,
+        hardPity = 21,
+        baseRate = 0.006,
+        softPityStart = 21, // 永不触发软保底
         softPityIncrement = 0.0
     )
 

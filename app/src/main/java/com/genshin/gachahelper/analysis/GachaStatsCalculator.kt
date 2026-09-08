@@ -33,7 +33,29 @@ class GachaStatsCalculator @Inject constructor() {
          * 注意：这是近似判断，精确判断需要卡池 UP 表。
          */
         private val STANDARD_FIVE_STAR_CHARACTERS = setOf(
-            "迪卢克", "琴", "刻晴", "莫娜", "七七", "提纳里", "迪希雅"
+            "迪卢克", "琴", "刻晴", "莫娜", "七七", "提纳里", "迪希雅", "梦见月瑞希"
+        )
+
+        /**
+         * "身份反转"角色的历史 UP 窗口（常驻/现常驻角色曾作为角色活动祈愿 UP 的时段）。
+         *
+         * 兜底名单记录的是角色"当前"身份，但判定历史记录时必须用"抽卡当时"的身份：
+         * 在这些窗口内抽到对应角色 = 当期 UP（小保底赢），窗口外抽到 = 歪（小保底输）。
+         *
+         * 数据来源（官方卡池公告 / 社区卡池时间线）：
+         * - 刻晴：1.3「霓裾翩跹」2021-02-17 ~ 2021-03-01（唯一开服常驻被安排活动 UP 的角色）
+         * - 提纳里：3.0 上半 2022-08-24 ~ 2022-09-09，3.1 起入常驻
+         * - 迪希雅：3.5 上半 2023-03-01 ~ 2023-03-21，3.6 起入常驻
+         * - 梦见月瑞希：5.4 首发 UP 2025-02-12 起，5.5 起入常驻（窗口取 5.4 版本期）
+         *
+         * 注意：刻晴窗口必须精确到其 UP 池结束，结束后她回归歪池，误扩会反向误判。
+         * 新增常驻角色时如曾有限定 UP 期，需同步登记，避免 UP 率/大保底统计出错。
+         */
+        private val HISTORICAL_UP_WINDOWS: Map<String, List<Pair<String, String>>> = mapOf(
+            "刻晴" to listOf("2021-02-17" to "2021-03-01"),
+            "提纳里" to listOf("2022-08-24" to "2022-09-09"),
+            "迪希雅" to listOf("2023-03-01" to "2023-03-21"),
+            "梦见月瑞希" to listOf("2025-02-12" to "2025-03-25")
         )
     }
 
@@ -155,10 +177,12 @@ class GachaStatsCalculator @Inject constructor() {
                 (chronicledStats?.basic?.fiveStarCount ?: 0)
 
         // 全局平均出金：角色共享间隔（一份） + 其他池各自间隔
+        // 注意：新手池排除在外。新手池最多 20 抽即关池（池容量不是保底），
+        // 能观察到的出金天然被截断在 ≤20 抽，混入会把全局平均显著拉低（选择偏差），
+        // 与运气分排除新手池的口径保持一致。
         val allIntervals = charSharedIntervals +
                 (weaponStats?.fiveStar?.intervals ?: emptyList()) +
                 (standardStats?.fiveStar?.intervals ?: emptyList()) +
-                (noviceStats?.fiveStar?.intervals ?: emptyList()) +
                 (chronicledStats?.fiveStar?.intervals ?: emptyList())
         val avgPulls = if (allIntervals.isNotEmpty()) {
             allIntervals.average()
@@ -301,7 +325,7 @@ class GachaStatsCalculator @Inject constructor() {
         // 判断是否大保底：看最近一次五星是不是 UP
         val isGuaranteed = if (lastFiveStar != null) {
             // 最近一次是常驻（歪了）→ 下次必出 UP（大保底）
-            !isUpItem(lastFiveStar.itemName, upItems, poolType)
+            !isUpItem(lastFiveStar.itemName, lastFiveStar.time, upItems, poolType)
         } else {
             // 从未出过五星 → 不是大保底（第一次是 50/50）
             false
@@ -407,7 +431,7 @@ class GachaStatsCalculator @Inject constructor() {
         var lostCount = 0
 
         for (r in fiveStars) {
-            if (isUpItem(r.itemName, upItems, poolType)) {
+            if (isUpItem(r.itemName, r.time, upItems, poolType)) {
                 upCount++
             } else {
                 lostCount++
@@ -429,11 +453,23 @@ class GachaStatsCalculator @Inject constructor() {
      * 判断一个五星物品是否为 UP。
      *
      * 优先级：
-     * 1. 如果 upItems 非空，精确匹配 upItems 列表
-     * 2. 否则对于角色池，用常驻列表兜底（非常驻=UP）
-     * 3. 武器池等没有常驻列表的，默认全部视为 UP（不准确，但比全算歪好）
+     * 1. 如果 upItems 非空，精确匹配 upItems 列表（忽略时间）
+     * 2. 否则对于角色池，用常驻列表兜底：
+     *    - 非常驻五星 → 视为 UP（限定角色只在 UP 期出现于活动池）
+     *    - 常驻五星 → 先查"历史 UP 窗口"（抽卡时间在窗口内 = 曾作为当期 UP），
+     *      未命中则视为歪了（当前常驻在活动池出现 = 歪池）
+     * 3. 武器池等无常驻列表可兜底：无 upItems 时保守判非 UP（返回 false）。
+     *    注意：武器池的保底机制是"命定值/定轨"，不是 50/50 大保底，
+     *    因此该返回值只影响武器池 UP 率展示，不影响大保底语义。
+     *
+     * @param time 抽卡时间（用于匹配历史 UP 窗口；字符串格式 yyyy-MM-dd HH:mm:ss）
      */
-    private fun isUpItem(itemName: String, upItems: List<String>, poolType: Int): Boolean {
+    private fun isUpItem(
+        itemName: String,
+        time: String?,
+        upItems: List<String>,
+        poolType: Int
+    ): Boolean {
         if (upItems.isNotEmpty()) {
             return itemName in upItems
         }
@@ -443,11 +479,28 @@ class GachaStatsCalculator @Inject constructor() {
                 poolType == GachaType.CHARACTER_2.value
         if (isCharacterPool) {
             // 非常驻五星 → 视为 UP
-            return itemName !in STANDARD_FIVE_STAR_CHARACTERS
+            if (itemName !in STANDARD_FIVE_STAR_CHARACTERS) {
+                return true
+            }
+            // 当前常驻五星：查是否曾作为活动 UP 被抽到（"身份反转"角色）
+            return isInHistoricalUpWindow(itemName, time)
         }
 
         // 武器池等：没有常驻列表兜底，默认不算 UP
         return false
+    }
+
+    /**
+     * 判断抽卡时间是否落在该角色的历史 UP 窗口内。
+     * 命中说明该角色当时是活动池当期 UP（小保底赢），即使它现在已入常驻。
+     */
+    private fun isInHistoricalUpWindow(itemName: String, time: String?): Boolean {
+        if (time == null || time.length < 10) return false
+        val date = time.substring(0, 10)
+        // 日期为 yyyy-MM-dd 定长格式，字典序比较等价于时间先后
+        return HISTORICAL_UP_WINDOWS[itemName].orEmpty().any { (start, end) ->
+            date in start..end
+        }
     }
 
     // ==================== 公开工具方法 ====================

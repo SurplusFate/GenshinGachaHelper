@@ -1071,4 +1071,162 @@ class GachaStatsCalculatorTest {
         assertEquals(emptyList<Int>(), stats.fiveStar.singleLuckScores)
         assertEquals(LuckConfidence.INSUFFICIENT, stats.fiveStar.luckConfidence)
     }
+
+    // ==================== 历史 UP 窗口（身份反转角色） ====================
+
+    /**
+     * 辅助：构建"前面 pulls-1 抽普通、第 pulls 抽出指定五星"的角色池记录。
+     * time 用于命中/避开历史 UP 窗口。
+     */
+    private fun buildSingleFiveStarAt(
+        pulls: Int,
+        itemName: String,
+        time: String,
+        poolType: Int = GachaType.CHARACTER.value
+    ): List<GachaRecordEntity> {
+        return buildList {
+            for (i in 1 until pulls) add(makeRecord(i.toLong(), 3, poolType))
+            add(makeRecord(pulls.toLong(), 5, poolType, itemName, time))
+        }
+    }
+
+    @Test
+    fun `历史UP窗口_刻晴1_3UP期抽到算UP且不触发大保底`() {
+        // 1.3「霓裾翩跹」2021-02-17 ~ 2021-03-01，期间刻晴是当期 UP
+        val records = buildSingleFiveStarAt(40, "刻晴", "2021-02-20 12:00:00")
+
+        val result = calculator.calculatePoolStats(records, GachaType.CHARACTER.value)
+
+        assertEquals(1, result.up.upFiveStarCount)
+        assertEquals(0, result.up.lostFiveStarCount)
+        assertEquals(1.0, result.up.upRate, 0.01)
+        // 当期 UP → 下次仍是 50/50，不是大保底
+        assertFalse(result.pity.isGuaranteed)
+    }
+
+    @Test
+    fun `历史UP窗口_刻晴UP期外抽到算歪并触发大保底`() {
+        // 2021-06：胡桃等 UP 期间歪出刻晴（她回归歪池）→ 算歪
+        val records = buildSingleFiveStarAt(40, "刻晴", "2021-06-01 12:00:00")
+
+        val result = calculator.calculatePoolStats(records, GachaType.CHARACTER.value)
+
+        assertEquals(0, result.up.upFiveStarCount)
+        assertEquals(1, result.up.lostFiveStarCount)
+        // 歪了 → 下次大保底
+        assertTrue(result.pity.isGuaranteed)
+    }
+
+    @Test
+    fun `历史UP窗口_提纳里3_0首发期抽到算UP`() {
+        val records = buildSingleFiveStarAt(45, "提纳里", "2022-09-01 12:00:00")
+
+        val result = calculator.calculatePoolStats(records, GachaType.CHARACTER.value)
+
+        assertEquals(1, result.up.upFiveStarCount)
+        assertEquals(0, result.up.lostFiveStarCount)
+        assertFalse(result.pity.isGuaranteed)
+    }
+
+    @Test
+    fun `历史UP窗口_提纳里入常驻后抽到算歪`() {
+        // 3.1 起提纳里进常驻，之后在活动池抽到 = 歪
+        val records = buildSingleFiveStarAt(45, "提纳里", "2023-05-01 12:00:00")
+
+        val result = calculator.calculatePoolStats(records, GachaType.CHARACTER.value)
+
+        assertEquals(0, result.up.upFiveStarCount)
+        assertEquals(1, result.up.lostFiveStarCount)
+        assertTrue(result.pity.isGuaranteed)
+    }
+
+    @Test
+    fun `历史UP窗口_迪希雅3_5首发期抽到算UP`() {
+        val records = buildSingleFiveStarAt(45, "迪希雅", "2023-03-10 12:00:00")
+
+        val result = calculator.calculatePoolStats(records, GachaType.CHARACTER.value)
+
+        assertEquals(1, result.up.upFiveStarCount)
+        assertEquals(0, result.up.lostFiveStarCount)
+        assertFalse(result.pity.isGuaranteed)
+    }
+
+    @Test
+    fun `历史UP窗口_梦见月瑞希5_4期算UP_入常驻后算歪`() {
+        // 5.4 首发 UP 期
+        val inUp = calculator.calculatePoolStats(
+            buildSingleFiveStarAt(45, "梦见月瑞希", "2025-03-01 12:00:00"),
+            GachaType.CHARACTER.value
+        )
+        assertEquals(1, inUp.up.upFiveStarCount)
+        assertFalse(inUp.pity.isGuaranteed)
+
+        // 5.5 入常驻后
+        val afterStandard = calculator.calculatePoolStats(
+            buildSingleFiveStarAt(45, "梦见月瑞希", "2025-06-01 12:00:00"),
+            GachaType.CHARACTER.value
+        )
+        assertEquals(0, afterStandard.up.upFiveStarCount)
+        assertTrue(afterStandard.pity.isGuaranteed)
+    }
+
+    // ==================== 新手池概率模型 ====================
+
+    @Test
+    fun `新手池模型_15抽出金评约91分而非100`() {
+        // 新手池真实概率 0.6% 无保底，15 抽 survival = 0.994^15 ≈ 0.914
+        val records = buildSingleFiveStarAt(15, "诺艾尔", "2021-01-01 00:00:00", GachaType.NOVICE.value)
+
+        val result = calculator.calculatePoolStats(records, GachaType.NOVICE.value)
+
+        // 旧模型（baseRate=0.0）会评 100 分；真实几何模型约 91 分
+        assertEquals(91, result.fiveStar.luckScore)
+    }
+
+    @Test
+    fun `新手池模型_20抽出金约88分而非0`() {
+        // 20 抽是池容量上限不是保底，出金概率仅约 11.3%；旧模型误把第 20 抽当必出评 0 分
+        val records = buildSingleFiveStarAt(20, "诺艾尔", "2021-01-01 00:00:00", GachaType.NOVICE.value)
+
+        val result = calculator.calculatePoolStats(records, GachaType.NOVICE.value)
+
+        // 真实几何模型 survival(20) ≈ 0.887
+        assertEquals(88, result.fiveStar.luckScore)
+    }
+
+    @Test
+    fun `新手池模型_19抽出金约89分而非100`() {
+        // 旧模型 19 抽必评 100 分（以为 20 抽前不可能出金）；真实几何模型约 89 分
+        val records = buildSingleFiveStarAt(19, "诺艾尔", "2021-01-01 00:00:00", GachaType.NOVICE.value)
+
+        val result = calculator.calculatePoolStats(records, GachaType.NOVICE.value)
+
+        assertTrue("19 抽出金不应评满分，实际 ${result.fiveStar.luckScore}",
+            result.fiveStar.luckScore == 89)
+    }
+
+    @Test
+    fun `新手池不混入全局平均出金`() {
+        // 角色池 80 抽出金（高间隔），新手池 10 抽出金
+        // 新手池最多 20 抽关池，出金天然截断在 ≤20，混入会系统性拉低全局平均
+        val characterRecords = buildList {
+            for (i in 1..79) add(makeRecord(i.toLong(), 3, GachaType.CHARACTER.value))
+            add(makeRecord(80L, 5, GachaType.CHARACTER.value, "限定角色A"))
+        }
+        val noviceRecords = buildList {
+            for (i in 1001 until 1010) add(makeRecord(i.toLong(), 3, GachaType.NOVICE.value))
+            add(makeRecord(1010L, 5, GachaType.NOVICE.value, "诺艾尔"))
+        }
+
+        val report = calculator.generateReport(
+            characterRecords = characterRecords,
+            weaponRecords = emptyList(),
+            standardRecords = emptyList(),
+            noviceRecords = noviceRecords
+        )
+
+        // 全局平均 = 角色池 [80]，新手池间隔不计入
+        assertEquals(80.0, report.avgPullsPerFiveStar, 0.01)
+        assertEquals(2, report.totalFiveStars) // 五星总数仍统计新手池
+    }
 }
