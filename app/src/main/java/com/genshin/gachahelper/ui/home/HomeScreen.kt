@@ -3,6 +3,7 @@ package com.genshin.gachahelper.ui.home
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -435,9 +436,10 @@ private fun LuckRing(score: Int) {
                 )
             }
         }
-        // 流光层：Canvas 内容固定，动画只改 graphicsLayer.rotationZ → 硬件合成、零重绘
-        if (!reduceMotion) {
-            LuckRingScan(gold = gold)
+        // 弧内流光：高光只贴着金色进度弧滑动，绝不越界到空白轨道。
+        // Canvas 内容固定，动画只改 graphicsLayer.rotationZ → 硬件合成、零重绘
+        if (!reduceMotion && score >= 20) {
+            LuckRingScan(gold = gold, score = score)
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
@@ -456,14 +458,23 @@ private fun LuckRing(score: Int) {
     }
 }
 
-/** 运气环流光高光：彗尾式亮段沿整环匀速旋转，只更新图层旋转角，不掉帧 */
+/** 运气环弧内流光：高光段从进度弧起点滑向终点再折返，只更新图层旋转角，不掉帧 */
 @Composable
-private fun LuckRingScan(gold: Color) {
+private fun LuckRingScan(gold: Color, score: Int) {
+    val totalSweep = 360f * score.coerceIn(0, 100) / 100f
+    // 高光段自身宽度约 44°，travel 保证其前端不越过弧尾
+    val headSpan = 44f
+    val travel = (totalSweep - headSpan).coerceAtLeast(0f)
+    if (travel <= 1f) return
+
     val transition = rememberInfiniteTransition(label = "luckScan")
     val angle by transition.animateFloat(
         initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing)),
+        targetValue = travel,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
         label = "scanAngle"
     )
     Canvas(
@@ -472,34 +483,27 @@ private fun LuckRingScan(gold: Color) {
             .graphicsLayer { rotationZ = angle }
     ) {
         val stroke = 8.dp.toPx()
-        // 渐隐尾迹
+        // 柔光晕（比进度弧略宽，制造辉光感）
         drawArc(
-            color = gold.copy(alpha = 0.18f),
-            startAngle = -75f,
-            sweepAngle = 160f,
+            color = gold.copy(alpha = 0.22f),
+            startAngle = -90f,
+            sweepAngle = headSpan,
+            useCenter = false,
+            style = Stroke(width = (stroke + 4.dp.toPx()), cap = StrokeCap.Round)
+        )
+        // 亮段主体
+        drawArc(
+            color = gold.copy(alpha = 0.95f),
+            startAngle = -90f,
+            sweepAngle = headSpan,
             useCenter = false,
             style = Stroke(width = stroke, cap = StrokeCap.Round)
         )
+        // 白热核心（前端更亮，突出"流动方向"）
         drawArc(
-            color = gold.copy(alpha = 0.4f),
-            startAngle = -50f,
-            sweepAngle = 105f,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-        // 亮头
-        drawArc(
-            color = gold.copy(alpha = 0.9f),
-            startAngle = -22f,
-            sweepAngle = 44f,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-        // 白热核心
-        drawArc(
-            color = Color.White.copy(alpha = 0.85f),
-            startAngle = -10f,
-            sweepAngle = 20f,
+            color = Color.White.copy(alpha = 0.9f),
+            startAngle = -90f + headSpan * 0.45f,
+            sweepAngle = headSpan * 0.45f,
             useCenter = false,
             style = Stroke(width = stroke, cap = StrokeCap.Round)
         )
