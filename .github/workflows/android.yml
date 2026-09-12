@@ -26,6 +26,14 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
+      # release.keystore 未入库（.gitignore 已屏蔽），CI 生成一次性密钥供签名校验通过
+      - name: Generate throwaway keystore
+        run: |
+          keytool -genkeypair -v -keystore release.keystore -alias gacha-release \
+            -keyalg RSA -keysize 2048 -validity 3650 \
+            -storepass 123456 -keypass 123456 \
+            -dname "CN=CI, OU=CI, O=CI, L=CI, ST=CI, C=CN"
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
