@@ -37,6 +37,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.CrashLogActivity"
+            android:exported="false"
+            android:theme="@style/Theme.GenshinGachaHelper" />
+
         <!-- 设备重启后恢复每日自动签到（权限已在顶部声明） -->
         <receiver
             android:name=".signin.SignInBootReceiver"

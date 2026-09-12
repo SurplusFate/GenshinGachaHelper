@@ -3,8 +3,6 @@ package com.genshin.gachahelper.ui.report
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
-import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.analysis.GachaReport

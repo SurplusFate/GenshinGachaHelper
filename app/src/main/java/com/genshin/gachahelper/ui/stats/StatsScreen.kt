@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
@@ -62,6 +63,8 @@ import com.genshin.gachahelper.analysis.GachaReport
 import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.data.local.dao.GachaRecordDao.DailyStat
 import com.genshin.gachahelper.data.local.dao.GachaRecordDao.ItemCount
+import com.genshin.gachahelper.ui.GlassSurface
+import com.genshin.gachahelper.ui.dockContentBottomPadding
 import com.genshin.gachahelper.ui.navigation.Screen
 import com.genshin.gachahelper.ui.theme.FiveStarColor
 import com.genshin.gachahelper.ui.theme.FiveStarGlowInner
@@ -126,6 +129,51 @@ fun StatsScreen(
 
 // ============================ 主滚动布局 ============================
 
+/**
+ * 统计页内容块：为让「图鉴」等大区块能被 LazyColumn 按行懒加载，
+ * 不再把整段内容塞进单个 item（旧实现会导致一次性组合上百张卡片，滚动卡顿），
+ * 而是把页面拆成小块（区块头/图鉴行/单月日历等）逐行 item 化。
+ * 日历等需要内部状态（当前月份）的块使用稳定 key，回收后状态不丢。
+ */
+private sealed interface StatsBlock {
+    val key: String
+
+    data object Overview : StatsBlock {
+        override val key = "overview"
+    }
+
+    data class Header(val title: String) : StatsBlock {
+        override val key = "header-$title"
+    }
+
+    data object Timeline : StatsBlock {
+        override val key = "timeline"
+    }
+
+    data class CollectionHeader(
+        val title: String,
+        val count: Int,
+        val color: Color
+    ) : StatsBlock {
+        override val key = "collection-header-$title"
+    }
+
+    data class CollectionRowBlock(
+        val row: List<ItemCount>,
+        val color: Color
+    ) : StatsBlock {
+        override val key = "collection-row-$color-${row.firstOrNull()?.itemName ?: "empty"}"
+    }
+
+    data class Empty(val message: String) : StatsBlock {
+        override val key = "empty-$message"
+    }
+
+    data object Calendar : StatsBlock {
+        override val key = "calendar"
+    }
+}
+
 @Composable
 private fun StatsScrollContent(
     report: GachaReport,
@@ -135,14 +183,150 @@ private fun StatsScrollContent(
     navController: NavController
 ) {
     val listState = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
 
-    // 各区块在 LazyColumn 中的起始 item 索引
-    // 0 = 概览, 1 = 时间轴, 2 = 图鉴, 3 = 日历
-    val sectionStartIndices = listOf(0, 1, 2, 3)
+    // 页面内容扁平化：概览/时间轴/图鉴(按稀有度分头并按 3 列拆行)/日历，
+    // 全部作为 LazyColumn 的小 item，滚动时按需组合。
+    val blocks = remember(timeline, itemCollection, dailyStats) {
+        buildList {
+            add(StatsBlock.Overview)
+            add(StatsBlock.Header("时间轴"))
+            if (timeline.isEmpty()) {
+                add(StatsBlock.Empty("暂无五星记录"))
+            } else {
+                add(StatsBlock.Timeline)
+            }
+
+            add(StatsBlock.Header("图鉴"))
+            if (itemCollection.isEmpty()) {
+                add(StatsBlock.Empty("暂无物品记录"))
+            } else {
+                val five = itemCollection.filter { it.rarity == 5 }
+                val four = itemCollection.filter { it.rarity == 4 }
+                val three = itemCollection.filter { it.rarity == 3 }
+                fun addRarity(title: String, items: List<ItemCount>, color: Color) {
+                    if (items.isEmpty()) return
+                    add(StatsBlock.CollectionHeader(title = title, count = items.size, color = color))
+                    items.chunked(3).forEach { row ->
+                        add(StatsBlock.CollectionRowBlock(row = row, color = color))
+                    }
+                }
+                addRarity("五星", five, FiveStarColor)
+                addRarity("四星", four, FourStarColor)
+                addRarity("三星", three, ThreeStarColor)
+            }
+
+            add(StatsBlock.Header("日历"))
+            if (dailyStats.isEmpty()) {
+                add(StatsBlock.Empty("暂无日历数据"))
+            } else {
+                add(StatsBlock.Calendar)
+            }
+        }
+    }
+
+    // 各区块在 LazyColumn 中的起始 item 索引（用于吸顶导航跳转/高亮）
+    val sectionStartIndices = remember(blocks) {
+        listOf(
+            blocks.indexOfFirst { it is StatsBlock.Overview },
+            blocks.indexOfFirst { it is StatsBlock.Header && it.title == "时间轴" },
+            blocks.indexOfFirst { it is StatsBlock.Header && it.title == "图鉴" },
+            blocks.indexOfFirst { it is StatsBlock.Header && it.title == "日历" }
+        )
+    }
     val sectionNames = listOf("概览", "时间轴", "图鉴", "日历")
 
-    // 根据滚动位置自动高亮当前区块
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = 52.dp, bottom = dockContentBottomPadding())
+        ) {
+            items(
+                count = blocks.size,
+                key = { blocks[it].key }
+            ) { index ->
+                when (val block = blocks[index]) {
+                    is StatsBlock.Overview -> {
+                        SectionTag("概览")
+                        OverviewContent(report = report, navController = navController)
+                    }
+                    is StatsBlock.Header -> SectionTag(block.title)
+                    is StatsBlock.Timeline -> TimelineContent(timeline = timeline)
+                    is StatsBlock.CollectionHeader -> CollectionHeaderRow(block)
+                    is StatsBlock.CollectionRowBlock -> StatsCollectionRow(block)
+                    is StatsBlock.Empty -> EmptyState(message = block.message)
+                    is StatsBlock.Calendar -> CalendarContent(dailyStats = dailyStats)
+                }
+            }
+        }
+
+        // 吸顶导航栏（始终可见的浮层）。滚动高亮逻辑在 StatsSectionNavBar 内部，
+        // 跨区块时只有浮层自身重组，不会带动整页 LazyColumn 树。
+        StatsSectionNavBar(
+            listState = listState,
+            sectionNames = sectionNames,
+            sectionStartIndices = sectionStartIndices,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
+    }
+}
+
+// ============================ 图鉴行级渲染（按行懒加载） ============================
+
+@Composable
+private fun CollectionHeaderRow(block: StatsBlock.CollectionHeader) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(block.color)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "${block.title}（${block.count} 种）",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun StatsCollectionRow(block: StatsBlock.CollectionRowBlock) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        block.row.forEach { item ->
+            Box(modifier = Modifier.weight(1f)) {
+                CollectionCard(item = item, borderColor = block.color)
+            }
+        }
+        repeat(3 - block.row.size) {
+            Box(modifier = Modifier.weight(1f))
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+}
+
+// ============================ 吸顶导航栏 ============================
+
+// 吸顶导航栏封装：derivedStateOf 只在本组件内读取，滚动跨区块时仅浮层自身重组，
+// 不会让外层统计页（含 LazyColumn 内容 DSL）整体 recompose，保证滑动帧率平稳。
+@Composable
+private fun StatsSectionNavBar(
+    listState: LazyListState,
+    sectionNames: List<String>,
+    sectionStartIndices: List<Int>,
+    modifier: Modifier = Modifier
+) {
+    val coroutineScope = rememberCoroutineScope()
+
     val activeSectionIndex by remember {
         derivedStateOf {
             val firstVisible = listState.firstVisibleItemIndex
@@ -154,52 +338,17 @@ private fun StatsScrollContent(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 52.dp, bottom = 24.dp)
-        ) {
-            // ===== 区块 1: 概览 =====
-            item(key = "overview") {
-                SectionTag("概览")
-                OverviewContent(report = report, navController = navController)
+    StatsNavBar(
+        sectionNames = sectionNames,
+        activeIndex = activeSectionIndex,
+        onTabClick = { index ->
+            coroutineScope.launch {
+                listState.animateScrollToItem(sectionStartIndices[index])
             }
-
-            // ===== 区块 2: 时间轴 =====
-            item(key = "timeline") {
-                SectionTag("时间轴")
-                TimelineContent(timeline = timeline)
-            }
-
-            // ===== 区块 3: 图鉴 =====
-            item(key = "collection") {
-                SectionTag("图鉴")
-                CollectionContent(items = itemCollection)
-            }
-
-            // ===== 区块 4: 日历 =====
-            item(key = "calendar") {
-                SectionTag("日历")
-                CalendarContent(dailyStats = dailyStats)
-            }
-        }
-
-        // 吸顶导航栏（始终可见的浮层）
-        StatsNavBar(
-            sectionNames = sectionNames,
-            activeIndex = activeSectionIndex,
-            onTabClick = { index ->
-                coroutineScope.launch {
-                    listState.animateScrollToItem(sectionStartIndices[index])
-                }
-            },
-            modifier = Modifier.align(Alignment.TopCenter)
-        )
-    }
+        },
+        modifier = modifier
+    )
 }
-
-// ============================ 吸顶导航栏 ============================
 
 @Composable
 private fun StatsNavBar(
@@ -208,11 +357,10 @@ private fun StatsNavBar(
     onTabClick: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
+    GlassSurface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp,
-        shadowElevation = 4.dp
+        shape = RoundedCornerShape(0.dp),
+        elevation = 0.dp
     ) {
         Row(
             modifier = Modifier
@@ -287,17 +435,12 @@ private fun SectionTag(title: String) {
 private fun OverviewContent(report: GachaReport, navController: NavController) {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         // 总览卡片
-        Card(
+        GlassSurface(
             modifier = Modifier.fillMaxWidth(),
-            shape = WishShapes.md,
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            shape = WishShapes.md
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                val onFill = wishOnPrimaryFill()
+                val onFill = wishTextHigh()
                 Text(
                     text = "累计抽卡",
                     style = MaterialTheme.typography.labelMedium,
@@ -343,11 +486,9 @@ private fun OverviewContent(report: GachaReport, navController: NavController) {
         Spacer(modifier = Modifier.height(12.dp))
 
         // 运气分析卡片
-        Card(
+        GlassSurface(
             modifier = Modifier.fillMaxWidth(),
-            shape = WishShapes.md,
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            shape = WishShapes.md
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
@@ -708,11 +849,11 @@ private fun RaritySection(title: String, items: List<ItemCount>, color: Color) {
 
 @Composable
 private fun CollectionCard(item: ItemCount, borderColor: Color) {
-    Surface(
+    GlassSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = WishShapes.xs,
-        border = BorderStroke(1.5.dp, borderColor),
-        color = borderColor.copy(alpha = 0.08f)
+        elevation = 0.dp,
+        borderStroke = BorderStroke(1.5.dp, borderColor)
     ) {
         Column(
             modifier = Modifier
@@ -991,11 +1132,9 @@ fun StatMini(
 
 @Composable
 fun PoolStatCard(poolLabel: String, stats: PoolStats) {
-    Surface(
+    GlassSurface(
         modifier = Modifier.fillMaxWidth(),
-        shape = WishShapes.md,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        shape = WishShapes.md
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(

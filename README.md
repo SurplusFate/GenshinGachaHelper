@@ -5,7 +5,6 @@
 ## 功能特性
 
 - **米游社扫码登录**：通过通行证 Passport API 扫码授权，无需复制链接
-- **验证码/密码登录**：WebView 内置米游社登录页，自动检测登录完成
 - **抽卡记录同步**：一键同步角色池、武器池、常驻池、新手池抽卡记录
 - **UIGF 导入/导出**：支持 UIGF v3.0 格式的历史数据导入导出，内容指纹去重，兼容多数据源合并
 - **本地永久存储**：Room SQLite 数据库，所有数据保存在本地，无服务器依赖
@@ -31,18 +30,12 @@
 
 ```
 登录方式
-  ├── 扫码登录（Passport API）
+  └── 扫码登录（Passport API）
   │     ├─ createQRLogin → 生成二维码（分屏扫码）
   │     ├─ queryQRLoginStatus → 轮询扫码状态
   │     │     └─ Confirmed → 返回 stoken
   │     └─ savePassportCredentialsAndFetchRoles → 换取 cookie_token / ltoken
   │
-  └── 验证码/密码登录（WebView）
-        ├─ user.mihoyo.com/#/login → 用户在 H5 页登录
-        ├─ 自动检测 URL 离开 #/login → 提取 cookie
-        ├─ 方案1：有 stoken_v2 → 直接走扫码同构链路
-        ├─ 方案2：有 login_ticket → 换 stoken 后走扫码链路
-        └─ 方案3：有 cookie_token_v2 + ltoken_v2 → 直接使用（验证码登录场景）
 
   通用后续流程
   ├─ getCookieAccountInfoBySToken → 换取 cookie_token
@@ -92,14 +85,19 @@ app/src/main/java/com/genshin/gachahelper/
 ```bash
 # 环境要求
 - JDK 17
-- Android SDK 34
-- Gradle 8.5
+- Android SDK 36（compileSdk / targetSdk = 36，minSdk = 26）
+- Gradle 8.14.5（仓库自带 wrapper，直接用 ./gradlew 即可）
 
-# 构建 APK
-gradle assembleDebug
+# 构建 release APK
+./gradlew assembleRelease
+
+# 构建 debug APK
+./gradlew assembleDebug
 ```
 
-生成的 APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。
+生成的 APK 位于 `app/build/outputs/apk/release/` 或 `app/build/outputs/apk/debug/`。
+
+> release 构建需在 `local.properties` / 环境变量中提供签名配置；未配置签名时产物为 unsigned。
 
 ## 使用说明
 
@@ -115,6 +113,32 @@ gradle assembleDebug
 - [BTMuli/TeyvatGuide](https://github.com/BTMuli/TeyvatGuide) — Token 管理参考
 
 ## 迭代记录
+
+### 2026-09-12 · v1.8.3 液态玻璃 UI + 稳定性整改（tag `v1.8.3`）
+
+**版本信息**
+
+- `versionCode = 55`，`versionName = "1.8.3"`
+- 基于 Kyant0/AndroidLiquidGlass 风格完成液态玻璃（Liquid Glass）视觉改造，compileSdk 升级至 36
+
+**视觉**
+
+- 新增 `GlassTokens` / `GlassSurface` / `GlassBackdrop` / `RoundedBottomDock`，液态玻璃材质统一走 token
+- 首页、统计、报告、设置、登录页全面套用玻璃卡片与圆角底坞
+
+**稳定性与整改**
+
+- 修复统计页 lens 渲染崩溃（`RectangleShape` 在部分机型上的裁剪异常，改用 `RoundedCornerShape` 防御）
+- 新增 `CrashCatcher` / `CrashReportOverlay` / `CrashLogActivity`，未捕获异常可本地留痕并导出
+- 未登录状态下不再弹出签到通知
+- 登出时清理本地用户数据（`clearUserData`）
+- 扫码提示改为「分屏 / 小窗」操作说明，移除 WebView 登录容器，仅保留扫码登录
+- 修复 `MainActivity.onCreate` 未调用 `super.onCreate` 导致的 `SuperNotCalledException`
+
+### 2026-08-28 · v1.7.7 首页运气环动画修复（tag `v1.7.7`）
+
+- 重构首页运气环动画：入场弧长生长 + 流光绕环
+- 流光限定在进度弧内滑动，不再越界扫空轨道
 
 记录本仓库的代码审查与修复轮次，便于回溯演进过程。
 

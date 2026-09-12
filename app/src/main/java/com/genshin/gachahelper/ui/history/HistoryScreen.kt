@@ -53,6 +53,8 @@ import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
+import com.genshin.gachahelper.ui.dockContentBottomPadding
+import com.genshin.gachahelper.ui.GlassSurface
 import com.genshin.gachahelper.ui.theme.FiveStarColor
 import com.genshin.gachahelper.ui.theme.FourStarColor
 import com.genshin.gachahelper.ui.theme.ThreeStarColor
@@ -154,7 +156,10 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
             else -> {
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(
+                        start = 16.dp, end = 16.dp, top = 4.dp,
+                        bottom = dockContentBottomPadding()
+                    ),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     // 用 Paging 的 items(count)，key/contentType 按类型区分：
@@ -414,13 +419,11 @@ fun FilterChips(
 
 @Composable
 fun SummaryBar(summary: HistorySummary) {
-    Surface(
+    GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = WishShapes.md,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        shape = WishShapes.md
     ) {
         Row(
             modifier = Modifier
@@ -506,13 +509,12 @@ fun SummaryCell(
 @Composable
 fun DateHeader(date: String, dayStat: DayStat?) {
     val hasFive = dayStat != null && dayStat.fiveCount > 0
-    Surface(
+    GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 8.dp, bottom = 4.dp),
         shape = WishShapes.xs,
-        color = if (hasFive) FiveStarColor.copy(alpha = 0.12f)
-        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        borderStroke = if (hasFive) BorderStroke(1.dp, FiveStarColor.copy(alpha = 0.5f)) else null
     ) {
         Row(
             modifier = Modifier
@@ -571,13 +573,12 @@ fun RecordItem(record: GachaRecordEntity, poolTypeName: String, interval: Int?) 
     }
     val badgeAlpha = if (record.rarity == 5) 0.22f else 0.15f
 
-    Surface(
+    GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
         shape = WishShapes.xs,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(
+        borderStroke = BorderStroke(
             width = 1.dp,
             color = rarityColor.copy(alpha = borderAlpha)
         )

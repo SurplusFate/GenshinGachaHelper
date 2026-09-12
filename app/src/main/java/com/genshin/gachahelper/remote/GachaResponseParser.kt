@@ -2,7 +2,6 @@ package com.genshin.gachahelper.remote
 
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaItemDatabase
-import com.genshin.gachahelper.data.model.ItemType
 import com.genshin.gachahelper.data.model.parseItemType
 import com.genshin.gachahelper.data.model.parseRarity
 import com.google.gson.JsonArray

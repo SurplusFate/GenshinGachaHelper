@@ -1,10 +1,7 @@
 package com.genshin.gachahelper.ui.auth
 
 import android.graphics.Bitmap
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebView as NativeWebView
-import android.webkit.WebViewClient
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,34 +24,28 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.genshin.gachahelper.auth.GameRole
+import com.genshin.gachahelper.ui.GlassSurface
 import com.genshin.gachahelper.ui.theme.WishShapes
+import com.genshin.gachahelper.ui.theme.wishAccentGold
 import com.genshin.gachahelper.ui.theme.wishOnPrimaryFill
 import com.genshin.gachahelper.ui.theme.wishSkyBackground
-import com.google.accompanist.web.AccompanistWebViewClient
-import com.google.accompanist.web.WebView
-import com.google.accompanist.web.rememberWebViewState
 
 @Composable
 fun AuthScreen(
@@ -64,23 +55,6 @@ fun AuthScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().wishSkyBackground()) {
-        // 登录方式切换（仅在可交互的登录/等待阶段显示；换取、选角色、完成阶段隐藏，
-        // 避免用户中途切换打断正在进行的登录流程）
-        val showMethodSwitcher = uiState.phase == AuthPhase.LOADING ||
-            uiState.phase == AuthPhase.QR_DISPLAY ||
-            uiState.phase == AuthPhase.QR_SCANNED ||
-            uiState.phase == AuthPhase.WEBVIEW_LOGIN
-        if (showMethodSwitcher) {
-            LoginMethodSwitcher(
-                selected = uiState.loginMethod,
-                onSelect = { method ->
-                    when (method) {
-                        LoginMethod.QR_CODE -> viewModel.switchToQrCode()
-                        LoginMethod.WEBVIEW -> viewModel.switchToWebView()
-                    }
-                }
-            )
-        }
         Box(modifier = Modifier.weight(1f)) {
             when (uiState.phase) {
                 AuthPhase.LOADING -> LoadingView(uiState.statusText)
@@ -88,24 +62,14 @@ fun AuthScreen(
                     bitmap = uiState.qrBitmap,
                     statusText = uiState.statusText,
                     error = uiState.error,
-                    debugInfo = uiState.debugInfo,
                     onRefresh = { viewModel.refreshQrCode() }
                 )
-                AuthPhase.QR_SCANNED -> ScannedView(
-                    statusText = uiState.statusText,
-                    debugInfo = uiState.debugInfo
-                )
-                AuthPhase.WEBVIEW_LOGIN -> WebViewLoginView(
-                    error = uiState.error,
-                    debugInfo = uiState.debugInfo,
-                    onLoginComplete = { viewModel.onWebViewLoginComplete() }
-                )
+                AuthPhase.QR_SCANNED -> ScannedView(statusText = uiState.statusText)
                 AuthPhase.EXCHANGING_TOKEN -> LoadingView(uiState.statusText)
                 AuthPhase.FETCHING_ROLES -> LoadingView(uiState.statusText)
                 AuthPhase.ROLE_SELECT -> RoleSelectView(
                     roles = uiState.gameRoles,
                     error = uiState.error,
-                    debugInfo = uiState.debugInfo,
                     onSelect = { viewModel.selectRole(it) }
                 )
                 AuthPhase.GENERATING_KEY -> LoadingView(uiState.statusText)
@@ -119,196 +83,10 @@ fun AuthScreen(
 }
 
 @Composable
-private fun LoginMethodSwitcher(
-    selected: LoginMethod,
-    onSelect: (LoginMethod) -> Unit
-) {
-    TabRow(selectedTabIndex = if (selected == LoginMethod.WEBVIEW) 1 else 0) {
-        Tab(
-            selected = selected == LoginMethod.QR_CODE,
-            onClick = { onSelect(LoginMethod.QR_CODE) },
-            text = { Text("扫码登录", style = MaterialTheme.typography.bodyMedium) }
-        )
-        Tab(
-            selected = selected == LoginMethod.WEBVIEW,
-            onClick = { onSelect(LoginMethod.WEBVIEW) },
-            text = { Text("账号密码/验证码", style = MaterialTheme.typography.bodyMedium) }
-        )
-    }
-}
-
-@Composable
-fun WebViewLoginView(
-    error: String?,
-    debugInfo: String?,
-    onLoginComplete: () -> Unit
-) {
-    val webViewState = rememberWebViewState(url = "https://user.mihoyo.com/#/login")
-
-    // 始终持有最新的回调引用，避免 remember 出的 client 捕获到过期的 lambda
-    val currentOnLoginComplete by rememberUpdatedState(onLoginComplete)
-
-    // 自动检测登录完成的 WebViewClient：当 URL 离开 #/login 且仍位于 user.mihoyo.com
-    // （含子路径）时认为登录已成功，自动触发凭证读取流程，无需用户手动点击按钮。
-    val loginClient = remember {
-        object : AccompanistWebViewClient() {
-            private var triggered = false
-
-            override fun shouldOverrideUrlLoading(
-                view: NativeWebView,
-                request: WebResourceRequest
-            ): Boolean {
-                checkLoginSuccess(request.url?.toString())
-                return false
-            }
-
-            override fun onPageStarted(view: NativeWebView, url: String?, favicon: Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-                checkLoginSuccess(url)
-            }
-
-            override fun doUpdateVisitedHistory(
-                view: NativeWebView,
-                url: String?,
-                isReload: Boolean
-            ) {
-                super.doUpdateVisitedHistory(view, url, isReload)
-                checkLoginSuccess(url)
-            }
-
-            private fun checkLoginSuccess(url: String?) {
-                if (triggered || url.isNullOrBlank()) return
-                // 登录页地址：https://user.mihoyo.com/#/login
-                // 登录成功后 URL 会脱离 #/login 并停留在 user.mihoyo.com（含子路径）
-                val onUserMihoyo = url.contains("user.mihoyo.com")
-                val leftLoginPage = !url.contains("#/login")
-                if (onUserMihoyo && leftLoginPage) {
-                    triggered = true
-                    currentOnLoginComplete()
-                }
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        // WebView 占主要空间
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        ) {
-            WebView(
-                state = webViewState,
-                modifier = Modifier.fillMaxSize(),
-                client = loginClient,
-                onCreated = { webView ->
-                    webView.settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        databaseEnabled = true
-                        setSupportZoom(true)
-                        builtInZoomControls = true
-                        displayZoomControls = false
-                        loadWithOverviewMode = true
-                        useWideViewPort = true
-                    }
-                    // 启用 cookie
-                    CookieManager.getInstance().apply {
-                        setAcceptCookie(true)
-                        setAcceptThirdPartyCookies(webView, true)
-                    }
-                }
-            )
-
-            // 加载中的转圈
-            if (webViewState.isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            }
-        }
-
-        // 底部操作区
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (error != null) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
-                ) {
-                    Text(
-                        text = error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.padding(12.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            Button(
-                onClick = onLoginComplete,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("我已登录，下一步")
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "请在上方页面中完成登录，然后点击此按钮",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-
-            // 调试信息
-            if (debugInfo != null && debugInfo.isNotBlank()) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            text = "调试信息",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = debugInfo.take(1500),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun QrCodeView(
     bitmap: Bitmap?,
     statusText: String,
     error: String?,
-    debugInfo: String?,
     onRefresh: () -> Unit
 ) {
     Column(
@@ -340,9 +118,12 @@ fun QrCodeView(
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "请使用米游社 App 扫一扫登录，或在分屏模式下操作：长按底部任务键开启分屏，在另一半屏幕打开米游社 → 我的 → 扫一扫",
+                text = "用米游社 App 扫码登录：\n" +
+                    "· 同一台手机：把米游社 App 开成分屏 / 小窗，与本页并排后再点「我的 → 扫一扫」\n" +
+                    "· 有另一台设备：直接用另一台设备的米游社扫码\n" +
+                    "· 截图保存后再扫无效",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -351,13 +132,6 @@ fun QrCodeView(
             OutlinedButton(onClick = onRefresh) {
                 Text("刷新二维码")
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "提示：截图扫码可能无法识别，请使用米游社 App 或分屏操作",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
         } else {
             if (error != null) {
                 Text(
@@ -382,34 +156,6 @@ fun QrCodeView(
             }
         }
 
-        // 调试信息
-        if (debugInfo != null && debugInfo.isNotBlank()) {
-            Spacer(modifier = Modifier.height(20.dp))
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "调试信息",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = debugInfo.take(1500),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
 
         Spacer(modifier = Modifier.height(24.dp))
     }
@@ -417,8 +163,7 @@ fun QrCodeView(
 
 @Composable
 fun ScannedView(
-    statusText: String,
-    debugInfo: String?
+    statusText: String
 ) {
     Column(
         modifier = Modifier
@@ -448,34 +193,6 @@ fun ScannedView(
             }
         }
 
-        // 调试信息
-        if (debugInfo != null && debugInfo.isNotBlank()) {
-            Spacer(modifier = Modifier.height(20.dp))
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "调试信息",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = debugInfo.take(1500),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
 
         Spacer(modifier = Modifier.height(24.dp))
     }
@@ -502,7 +219,6 @@ fun LoadingView(message: String) {
 fun RoleSelectView(
     roles: List<GameRole>,
     error: String?,
-    debugInfo: String?,
     onSelect: (GameRole) -> Unit
 ) {
     var selectedUid by remember { mutableStateOf(roles.firstOrNull()?.uid ?: "") }
@@ -521,15 +237,13 @@ fun RoleSelectView(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(roles) { role ->
-                Card(
+                GlassSurface(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = { selectedUid = role.uid },
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (selectedUid == role.uid)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else
-                            MaterialTheme.colorScheme.surface
-                    )
+                    borderStroke = if (selectedUid == role.uid)
+                        BorderStroke(1.5.dp, wishAccentGold())
+                    else
+                        null
                 ) {
                     Row(
                         modifier = Modifier
@@ -576,30 +290,6 @@ fun RoleSelectView(
                 }
             }
 
-            if (debugInfo != null && debugInfo.isNotBlank()) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = "调试信息",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = debugInfo.take(1000),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
         }
 
         Button(

@@ -30,4 +30,8 @@ interface AccountDao {
 
     @Query("DELETE FROM account WHERE id = :accountId")
     suspend fun deleteAccount(accountId: Long)
+
+    /** 清空全部账号（退出登录时使用，保证无残留） */
+    @Query("DELETE FROM account")
+    suspend fun deleteAll()
 }

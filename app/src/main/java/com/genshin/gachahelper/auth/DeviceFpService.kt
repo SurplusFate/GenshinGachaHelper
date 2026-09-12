@@ -3,7 +3,6 @@ package com.genshin.gachahelper.auth
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
-import android.util.DisplayMetrics
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

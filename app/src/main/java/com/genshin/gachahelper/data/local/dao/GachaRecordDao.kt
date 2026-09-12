@@ -95,6 +95,10 @@ interface GachaRecordDao {
     @Query("DELETE FROM gacha_record WHERE accountId = :accountId")
     suspend fun deleteAllByAccount(accountId: Long)
 
+    /** 清空全部抽卡记录（退出登录时使用，保证无残留） */
+    @Query("DELETE FROM gacha_record")
+    suspend fun deleteAll()
+
     /**
      * 获取指定账号下所有记录的内容指纹（poolType, time, itemName）
      * 用于导入时的二级去重：当 ID 不匹配但内容相同时也跳过

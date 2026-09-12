@@ -41,6 +41,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.genshin.gachahelper.ui.dockContentBottomPadding
+import com.genshin.gachahelper.ui.GlassSurface
 import com.genshin.gachahelper.ui.theme.ThemeMode
 
 @Composable
@@ -79,7 +81,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp + dockContentBottomPadding()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 导入结果提示
@@ -258,7 +260,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     if (showLogoutDialog) {
         ConfirmDialog(
             title = "确认退出",
-            message = "退出登录将同时清除本地抽卡数据，确定要退出吗？",
+            message = "退出登录将同时清除本地抽卡数据、关闭每日自动签到，确定要退出吗？",
             onConfirm = {
                 viewModel.logout()
                 showLogoutDialog = false
@@ -305,9 +307,8 @@ fun SettingsSection(
     title: String,
     content: @Composable () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    GlassSurface(
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(

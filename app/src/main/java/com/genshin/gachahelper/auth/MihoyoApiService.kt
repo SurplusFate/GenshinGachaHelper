@@ -27,11 +27,6 @@ data class TokenInfo(
     val mid: String
 )
 
-data class MultiTokenInfo(
-    val stoken: String,
-    val ltoken: String
-)
-
 data class QrCodeData(
     val url: String,
     val ticket: String,
@@ -113,9 +108,6 @@ class MihoyoApiService @Inject constructor(
         // Game Token 换 stoken（已废弃，返回 -5300）
         private const val API_GET_TOKEN_BY_GAME_TOKEN =
             "https://api-takumi.mihoyo.com/account/ma-cn-session/app/getTokenByGameToken"
-        // login_ticket 换 stoken + ltoken（GET，无需特殊头）
-        private const val API_GET_MULTI_TOKEN_BY_LOGIN_TICKET =
-            "https://api-takumi.mihoyo.com/auth/api/getMultiTokenByLoginTicket"
         // 获取游戏角色列表（需 DS2 + 4X salt + Cookie）
         private const val API_GET_GAME_ROLES =
             "https://api-takumi.mihoyo.com/binding/api/getUserGameRolesByCookie"
@@ -535,64 +527,6 @@ class MihoyoApiService @Inject constructor(
             ApiResult.Success(TokenInfo(stoken, mid))
         } catch (e: Exception) {
             ApiResult.Error("换取 stoken 异常: ${e.message}", -1, "", "getToken")
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 3b. Login Ticket 换 stoken + ltoken（GET，无需特殊头）
-    // ------------------------------------------------------------------
-    suspend fun getMultiTokenByLoginTicket(
-        loginTicket: String,
-        uid: String
-    ): ApiResult<MultiTokenInfo> = withContext(Dispatchers.IO) {
-        try {
-            val url = "$API_GET_MULTI_TOKEN_BY_LOGIN_TICKET?token_types=3&login_ticket=$loginTicket&uid=$uid"
-
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("User-Agent", DsSigner.USER_AGENT)
-                .get()
-                .build()
-
-            val response = client.newCall(request).execute()
-            val respBody = response.body?.string() ?: ""
-
-            if (!response.isSuccessful) {
-                return@withContext ApiResult.Error("HTTP ${response.code}", response.code, respBody, "multiToken")
-            }
-
-            val json = JsonParser.parseString(respBody).asJsonObject
-            val retcode = json.get("retcode")?.asInt ?: -1
-            if (retcode != 0) {
-                val msg = json.get("message")?.asString ?: "未知错误"
-                return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "multiToken")
-            }
-
-            val listArray = json.getAsJsonObject("data")?.getAsJsonArray("list")
-                ?: return@withContext ApiResult.Error("响应缺少 data.list", -1, respBody, "multiToken")
-
-            var stoken: String? = null
-            var ltoken: String? = null
-            for (item in listArray) {
-                val obj = item.asJsonObject
-                val name = obj.get("name")?.asString ?: ""
-                val token = obj.get("token")?.asString ?: ""
-                // 兼容服务端下发 stoken_v2 / ltoken_v2 的情况（优先取第一个出现的值）
-                when {
-                    (name == "stoken" || name == "stoken_v2") && stoken == null -> stoken = token
-                    (name == "ltoken" || name == "ltoken_v2") && ltoken == null -> ltoken = token
-                }
-            }
-
-            // 官方自 2023 年起该接口只返回 ltoken，stoken 允许为空；
-            // 只要 ltoken 存在即视为成功（调用方按 stoken 有无走不同链路）。
-            if (stoken.isNullOrBlank() && ltoken.isNullOrBlank()) {
-                return@withContext ApiResult.Error("响应中未找到可用 token", -1, respBody, "multiToken")
-            }
-
-            ApiResult.Success(MultiTokenInfo(stoken ?: "", ltoken ?: ""))
-        } catch (e: Exception) {
-            ApiResult.Error("换取 stoken 异常: ${e.message}", -1, "", "multiToken")
         }
     }
 

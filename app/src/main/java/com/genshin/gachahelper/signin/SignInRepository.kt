@@ -29,7 +29,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -55,7 +54,14 @@ enum class AutoState {
 /** 自动签到单次执行结果 */
 data class AutoSignInResult(
     val message: String,
-    val state: AutoState
+    val state: AutoState,
+
+    /**
+     * 是否需要弹系统通知。
+     * 默认 true；「今日已签到」这类非进展性提示置 false，
+     * 避免 App 每次打开/回前台补偿时反复打扰用户。
+     */
+    val notifyUser: Boolean = true
 )
 
 /**
@@ -139,7 +145,9 @@ class SignInRepository @Inject constructor(
                     publish(r.message, notifyUser = r.state != AutoState.RETRY)
                 } else {
                     cancelScheduled()
-                    publish("自动签到已开启，等待登录后生效")
+                    cancelNotification()
+                    // 未登录不弹系统通知，仅在页面内提示；登录后会自动恢复签到
+                    publish("请先登录米游社账号，登录后自动签到会自动生效", notifyUser = false)
                 }
             } else {
                 cancelScheduled()
@@ -164,6 +172,35 @@ class SignInRepository @Inject constructor(
     /** 取消周期签到任务（暂停场景使用） */
     private fun cancelScheduled() {
         workManager.cancelUniqueWork(UNIQUE_WORK_NAME)
+    }
+
+    /**
+     * 清除已展示的签到通知。
+     * 未登录暂停 / 退出登录时调用，避免旧通知长期挂在通知栏里继续打扰用户。
+     */
+    fun cancelNotification() {
+        runCatching { NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID) }
+    }
+
+    /**
+     * 退出登录：关闭自动签到开关、取消周期任务、清除已展示的通知与页面提示。
+     *
+     * 退出后不应再有任何签到相关行为与通知（下次登录需用户重新开启自动签到）。
+     */
+    fun onLogout() {
+        scope.launch {
+            try {
+                context.signInDataStore.edit { prefs ->
+                    prefs[KEY_ENABLED] = false
+                    prefs[KEY_UID] = ""
+                }
+                cancelScheduled()
+                cancelNotification()
+                _lastResult.value = null
+            } catch (_: Exception) {
+                // 登出流程不因签到侧异常中断
+            }
+        }
     }
 
     /** 注册 / 刷新 24h 周期签到任务（宽松执行，不绑定固定时刻） */
@@ -191,20 +228,26 @@ class SignInRepository @Inject constructor(
     private suspend fun checkAndRestore() {
         if (!isEnabled()) return
         if (!authRepository.isLoggedIn()) {
+            // 未登录：取消周期任务 + 清掉遗留的签到通知，只做页面内提示，
+            // 不再每次打开 App 都弹系统通知（历史问题：每次启动/回前台都打扰用户）
             cancelScheduled()
-            publish("自动签到已暂停：未登录，请先登录米游社账号")
+            cancelNotification()
+            publish("自动签到已暂停：未登录，请先登录米游社账号", notifyUser = false)
             return
         }
         val uid = authRepository.getUid()
         val region = authRepository.getServer()
         if (uid.isNullOrBlank() || region.isNullOrBlank()) {
             cancelScheduled()
-            publish("自动签到已暂停：缺少游戏账号信息(uid/region)，请重新登录")
+            cancelNotification()
+            publish("自动签到已暂停：缺少游戏账号信息(uid/region)，请重新登录", notifyUser = false)
             return
         }
         ensureScheduled()
         val r = performAutoSignIn()
-        publish(r.message, notifyUser = r.state != AutoState.RETRY)
+        // 前台补偿一律只写页面内提示：用户此刻就在 App 里，结果已可见，无需再弹系统通知；
+        // 系统通知只保留给「主动开启自动签到」「手动签到」这类需要告知结果的动作用户。
+        publish(r.message, notifyUser = false)
     }
 
     // ------------------------------------------------------------------
@@ -251,7 +294,8 @@ class SignInRepository @Inject constructor(
                 if (info.data.isSign) {
                     return AutoSignInResult(
                         "今日已签到（UID $uid 本月累计 ${info.data.totalSignDay} 天）",
-                        AutoState.DONE
+                        AutoState.DONE,
+                        notifyUser = false
                     )
                 }
             }
@@ -268,7 +312,8 @@ class SignInRepository @Inject constructor(
                     r.alreadySigned -> AutoSignInResult(
                         "今日已签到（UID $uid）" +
                             (r.message.takeIf { it.isNotBlank() }?.let { "：$it" } ?: ""),
-                        AutoState.DONE
+                        AutoState.DONE,
+                        notifyUser = false
                     )
                     r.isRisk -> AutoSignInResult(
                         "签到触发风控校验，请打开米游社 App 手动签到（UID $uid）",
@@ -329,7 +374,15 @@ class SignInRepository @Inject constructor(
     suspend fun performManualSignIn(): String {
         val message = manualSignInOnce()
         _lastResult.value = message
-        notify(message)
+        // 「今日已签到」只作为页面内的即时反馈，不再弹系统通知；
+        // 未登录 / 缺少账号信息同样只做页面内提示（不发通知，避免无意义的打扰）；
+        // 真正签到成功 / 失败等进展性结果仍保留系统通知。
+        val silent = message.startsWith("今日已签到") ||
+            message.startsWith("未登录") ||
+            message.startsWith("缺少游戏账号信息")
+        if (!silent) {
+            notify(message)
+        }
         return message
     }
 

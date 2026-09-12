@@ -27,11 +27,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.genshin.gachahelper.analysis.GachaReport
+import com.genshin.gachahelper.ui.GlassSurface
 import com.genshin.gachahelper.ui.theme.FiveStarColor
 import com.genshin.gachahelper.ui.theme.WishEmptyGlow
 import com.genshin.gachahelper.ui.theme.WishShapes
 import com.genshin.gachahelper.ui.theme.wishOnPrimaryFill
+import com.genshin.gachahelper.ui.theme.wishTextHigh
 
 @Composable
 fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
@@ -59,13 +60,9 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                         .padding(16.dp)
                 ) {
                     // 报告标题
-                    Card(
+                    GlassSurface(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = WishShapes.lg,
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                        shape = WishShapes.lg
                     ) {
                         Column(
                             modifier = Modifier
@@ -77,13 +74,13 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                                 text = "旅行者抽卡报告",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = wishOnPrimaryFill()
+                                color = wishTextHigh()
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Genshin Gacha Helper",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = wishOnPrimaryFill().copy(alpha = 0.8f)
+                                color = wishTextHigh().copy(alpha = 0.8f)
                             )
                         }
                     }
@@ -91,7 +88,7 @@ fun ReportScreen(viewModel: ReportViewModel = hiltViewModel()) {
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // 核心数据
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    GlassSurface(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(20.dp)) {
                             ReportRow("累计抽数", "${report.totalPulls} 抽")
                             ReportRow("五星总数", "${report.totalFiveStars} 个", FiveStarColor)
@@ -184,9 +181,8 @@ fun ReportRow(label: String, value: String, valueColor: androidx.compose.ui.grap
 
 @Composable
 fun MiniPoolReport(poolLabel: String, stats: com.genshin.gachahelper.analysis.PoolStats) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    GlassSurface(
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(

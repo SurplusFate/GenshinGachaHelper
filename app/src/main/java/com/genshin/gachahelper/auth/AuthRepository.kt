@@ -139,30 +139,6 @@ class AuthRepository @Inject constructor(
     }
 
     /**
-     * 保存 WebView 登录直接获取的凭证（可能没有 stoken，但有 cookie_token 和 ltoken）
-     * 用于验证码登录等场景，cookie 中没有 stoken/login_ticket，但有 cookie_token_v2 + ltoken_v2
-     */
-    suspend fun saveWebViewCredentials(
-        ltuid: String,
-        mid: String? = null,
-        cookieToken: String? = null,
-        ltoken: String? = null,
-        stoken: String? = null
-    ) {
-        context.authDataStore.edit { prefs ->
-            prefs[Keys.LTUID] = ltuid
-            mid?.let { prefs[Keys.MID] = it }
-            cookieToken?.let { prefs[Keys.COOKIE_TOKEN] = it }
-            ltoken?.let { prefs[Keys.LTOKEN] = it }
-            stoken?.let { prefs[Keys.STOKEN] = it }
-            // 如果没有 stoken，确保清除旧的（避免混淆）
-            if (stoken == null) {
-                prefs.remove(Keys.STOKEN)
-            }
-        }
-    }
-
-    /**
      * 保存游戏角色信息（UID、服务器、昵称）
      */
     suspend fun saveGameRole(

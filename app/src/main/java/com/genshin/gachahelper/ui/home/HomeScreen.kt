@@ -2,15 +2,11 @@ package com.genshin.gachahelper.ui.home
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -46,10 +42,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,17 +55,19 @@ import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.sync.SyncState
+import com.genshin.gachahelper.ui.dockContentBottomPadding
 import com.genshin.gachahelper.ui.navigation.Screen
 import com.genshin.gachahelper.ui.theme.FiveStarColor
-import com.genshin.gachahelper.ui.theme.WishDark
 import com.genshin.gachahelper.ui.theme.WishEmptyGlow
-import com.genshin.gachahelper.ui.theme.WishLight
 import com.genshin.gachahelper.ui.theme.WishShapes
 import com.genshin.gachahelper.ui.theme.goldGlowBorder
+import com.genshin.gachahelper.ui.GlassSurface
+import com.genshin.gachahelper.ui.theme.homeHeroCardGradient
+import com.genshin.gachahelper.ui.theme.homeNightBackdrop
 import com.genshin.gachahelper.ui.theme.isWishDark
 import com.genshin.gachahelper.ui.theme.rememberReduceMotion
+import com.genshin.gachahelper.ui.theme.wishCardBg
 import com.genshin.gachahelper.ui.theme.wishAccentGold
-import com.genshin.gachahelper.ui.theme.wishCardGradient
 import com.genshin.gachahelper.ui.theme.wishSuccess
 import com.genshin.gachahelper.ui.theme.wishWarning
 
@@ -82,108 +78,179 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    if (uiState.isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        return
-    }
-
-    // 既没登录也没有本地数据 → 引导页
-    if (!uiState.isLoggedIn && !uiState.hasData) {
-        WishEmptyGlow(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-            Text(
-                text = "原神抽卡助手",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "授权米游社自动同步，或手动导入 UIGF 数据，分析你的抽卡运气",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(32.dp))
-            Button(
-                onClick = { navController.navigate(Screen.Auth.route) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("授权米游社")
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { navController.navigate(Screen.Settings.route) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("导入 UIGF 数据")
-            }
-            }
-        }
-        return
-    }
-
-    LazyColumn(
+    // 首页固定夜空背景：深空渐变 + 星点 + 顶部鎏金氛围光
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            top = 12.dp, bottom = 24.dp
-        )
+            .homeNightBackdrop()
     ) {
-        // 1. Hero + 运气环 (方案A + 方案C 融合)
-        item { HeroLuckCard(uiState) }
+        // 浅色模式页面为冷调浅蓝白底，不再叠加星空/光晕，保持干净统一
+        if (isWishDark()) {
+            NightSkyCanvas(modifier = Modifier.fillMaxSize())
+        }
 
-        // 2. 最近出金横滑 (方案B)
-        if (uiState.recentFiveStars.isNotEmpty()) {
-            item { SectionHeader("最近出金") }
-            item {
-                RecentFiveStarsRow(
-                    records = uiState.recentFiveStars,
-                    intervals = uiState.recentFiveStarIntervals
+        when {
+            uiState.isLoading -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = wishAccentGold())
+                }
+            }
+
+            // 既没登录也没有本地数据 → 引导页
+            !uiState.isLoggedIn && !uiState.hasData -> {
+                WishEmptyGlow(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "原神抽卡助手",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "授权米游社自动同步，或手动导入 UIGF 数据，分析你的抽卡运气",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                        )
+                        Spacer(modifier = Modifier.height(32.dp))
+                        Button(
+                            onClick = { navController.navigate(Screen.Auth.route) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = WishShapes.lg,
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFE7C877),
+                                contentColor = Color(0xFF1A1508)
+                            )
+                        ) {
+                            Text("授权米游社", fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { navController.navigate(Screen.Settings.route) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = WishShapes.lg,
+                            colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                        ) {
+                            Text("导入 UIGF 数据")
+                        }
+                    }
+                }
+            }
+
+            else -> LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    top = 12.dp,
+                    // 底部为悬浮 DOCK 预留空白：最后一张卡片不会被胶囊压住
+                    bottom = dockContentBottomPadding() + 12.dp
+                )
+            ) {
+                // 1. Hero + 运气环 (方案A + 方案C 融合)
+                item { HeroLuckCard(uiState) }
+
+                // 2. 最近出金横滑 (方案B)
+                if (uiState.recentFiveStars.isNotEmpty()) {
+                    item { SectionHeader("最近出金") }
+                    item {
+                        RecentFiveStarsRow(
+                            records = uiState.recentFiveStars,
+                            intervals = uiState.recentFiveStarIntervals
+                        )
+                    }
+                }
+
+                // 3. 保底进度网格 (方案A)
+                item { SectionHeader("保底进度") }
+                val pools = listOf(
+                    "角色池" to uiState.characterStats,
+                    "角色池-2" to uiState.character2Stats,
+                    "武器池" to uiState.weaponStats,
+                    "常驻池" to uiState.standardStats,
+                    "新手池" to uiState.noviceStats,
+                    "集录池" to uiState.chronicledStats
+                )
+                items(pools.chunked(2)) { rowPools ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        rowPools.forEach { (label, stats) ->
+                            PityGridCard(
+                                label = label,
+                                poolStats = stats,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (rowPools.size < 2) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+
+                // 4. 运气拆解 (方案C)
+                item { SectionHeader("运气拆解") }
+                item { LuckDetailCard(uiState) }
+
+                // 5. 同步按钮
+                item { SyncSection(uiState, viewModel, navController) }
+            }
+        }
+    }
+}
+
+/** 首页夜空氛围层：顶部鎏金光晕 + 随机星点（仅深色模式显示星点，浅色暖白底不画星） */
+@Composable
+private fun NightSkyCanvas(modifier: Modifier = Modifier) {
+    val dark = isWishDark()
+    val stars = remember {
+        // 固定种子生成 42 颗星，避免重组随机闪烁
+        val seed = 20260908
+        var state = seed
+        fun next(): Float {
+            state = state * 1103515245 + 12345
+            return ((state ushr 16) and 0x7fff) / 32767f
+        }
+        List(42) {
+            Triple(next() * 1f, next() * 1f, 0.15f + next() * 0.7f)
+        }
+    }
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        // 左上 / 右上两团鎏金氛围光（模仿网页版 radial-gradient）
+        drawCircle(
+            brush = Brush.radialGradient(
+                listOf(Color(0xFFE7C877).copy(alpha = 0.10f), Color.Transparent),
+                center = androidx.compose.ui.geometry.Offset(w * 0.92f, 0f),
+                radius = w * 0.9f
+            )
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                listOf(Color(0xFF4C6FFF).copy(alpha = 0.06f), Color.Transparent),
+                center = androidx.compose.ui.geometry.Offset(0f, h * 0.2f),
+                radius = w * 0.75f
+            )
+        )
+        if (dark) {
+            stars.forEach { (fx, fy, alpha) ->
+                drawCircle(
+                    color = Color.White.copy(alpha = alpha * 0.85f),
+                    radius = if (alpha > 0.72f) 1.6f else 1.1f,
+                    center = androidx.compose.ui.geometry.Offset(fx * w, fy * h)
                 )
             }
         }
-
-        // 3. 保底进度网格 (方案A)
-        item { SectionHeader("保底进度") }
-        val pools = listOf(
-            "角色池" to uiState.characterStats,
-            "角色池-2" to uiState.character2Stats,
-            "武器池" to uiState.weaponStats,
-            "常驻池" to uiState.standardStats,
-            "新手池" to uiState.noviceStats,
-            "集录池" to uiState.chronicledStats
-        )
-        items(pools.chunked(2)) { rowPools ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                rowPools.forEach { (label, stats) ->
-                    PityGridCard(
-                        label = label,
-                        poolStats = stats,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                if (rowPools.size < 2) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
-
-        // 4. 运气拆解 (方案C)
-        item { SectionHeader("运气拆解") }
-        item { LuckDetailCard(uiState) }
-
-        // 5. 同步按钮
-        item { SyncSection(uiState, viewModel, navController) }
     }
 }
 
@@ -217,7 +284,6 @@ private fun HeroLuckCard(uiState: HomeUiState) {
     val luckConfidence = uiState.report?.overallLuckConfidence ?: LuckConfidence.INSUFFICIENT
     val luckVerdict = luckVerdictText(luckScore)
 
-    val dark = isWishDark()
     val gold = wishAccentGold()
     Card(
         modifier = Modifier
@@ -234,19 +300,24 @@ private fun HeroLuckCard(uiState: HomeUiState) {
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Box(
-            modifier = Modifier.wishCardGradient(
-                start = if (dark) WishDark.bgFloat else WishLight.bgFloat,
-                end = if (dark) WishDark.bgCard else WishLight.bgCard
-            )
-        ) {
-        Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
+                .homeHeroCardGradient()
+                .drawBehind {
+                    // 顶部鎏金氛围光（模仿网页版 hero 右上角 radial-gradient）
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            listOf(Color(0xFFE7C877).copy(alpha = 0.13f), Color.Transparent),
+                            center = androidx.compose.ui.geometry.Offset(size.width * 0.92f, size.height * 0.06f),
+                            radius = size.width * 0.85f
+                        )
+                    )
+                }
         ) {
-            // 左侧：大数字 + 三栏统计
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
                 // 账号信息行
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -258,12 +329,12 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                         else "本地数据",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = homeTextHigh()
                     )
                     Text(
                         text = "UID: ${uiState.uid ?: "未绑定"}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        color = homeTextMid()
                     )
                 }
 
@@ -281,14 +352,14 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                     Text(
                         text = "抽",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                        color = homeTextMid(),
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
                 Text(
                     text = "五星 $totalFiveStars · 平均 ${String.format("%.1f", avgPulls)} 抽出金",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    color = homeTextMid()
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -320,44 +391,25 @@ private fun HeroLuckCard(uiState: HomeUiState) {
                         modifier = Modifier.weight(1f)
                     )
                 }
-            }
 
-            // 右侧：运气环
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // 运气指数：整行轻量条，彻底避开右侧窄栏的挤压与截断
                 if (totalFiveStars > 0) {
-                    LuckRing(score = luckScore)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = luckVerdict,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Text(
-                        text = "运气指数 $luckScore · ${luckConfidence.displayName}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                    LuckScoreStrip(
+                        score = luckScore,
+                        confidenceName = luckConfidence.displayName,
+                        verdict = luckVerdict
                     )
                 } else {
-                    // 空态：没有五星时不渲染 0 分运气环，避免误导为"0 分非酋本酋"
-                    Spacer(modifier = Modifier.height(24.dp))
+                    // 空态：没有五星时不渲染 0 分，避免误导为"0 分非酋本酋"
                     Text(
-                        text = "暂无数据",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.4f)
-                    )
-                    Text(
-                        text = "出金后生成运气分析",
+                        text = "暂无运气分析 · 出金后生成",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                        color = homeTextLow()
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
-        }
         }
     }
 }
@@ -367,27 +419,34 @@ private fun HeroStat(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    valueColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
+    valueColor: Color? = null,
     valueSuffix: String = ""
 ) {
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    val effectiveValueColor = valueColor ?: homeTextHigh()
+    Column(
+        modifier = modifier
+            .clip(WishShapes.xs)
+            .background(homeChip())
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            color = homeTextMid()
         )
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
                 text = value,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = valueColor
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Black,
+                color = effectiveValueColor
             )
             if (valueSuffix.isNotEmpty()) {
                 Text(
                     text = valueSuffix,
                     style = MaterialTheme.typography.labelSmall,
-                    color = valueColor,
+                    color = effectiveValueColor,
                     modifier = Modifier.padding(bottom = 2.dp)
                 )
             }
@@ -395,8 +454,14 @@ private fun HeroStat(
     }
 }
 
+/** 运气指数轻量条：整行「标签 + 细进度条 + 分数」，下方一行结论，不再占据侧栏 */
 @Composable
-private fun LuckRing(score: Int) {
+private fun LuckScoreStrip(
+    score: Int,
+    confidenceName: String,
+    verdict: String,
+    modifier: Modifier = Modifier
+) {
     val animatedScore = remember { Animatable(0f) }
     LaunchedEffect(score) {
         animatedScore.snapTo(0f)
@@ -404,111 +469,57 @@ private fun LuckRing(score: Int) {
     }
 
     val gold = wishAccentGold()
-    val trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f)
-    val reduceMotion = rememberReduceMotion()
+    val fraction = (animatedScore.value / 100f).coerceIn(0f, 1f)
 
-    Box(
-        modifier = Modifier.size(80.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        // 轨道环：静态，仅绘制一次，不随动画重绘
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 6.dp.toPx()
-            drawArc(
-                color = trackColor,
-                startAngle = 0f,
-                sweepAngle = 360f,
-                useCenter = false,
-                style = Stroke(width = stroke)
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "运气指数",
+                style = MaterialTheme.typography.labelSmall,
+                color = homeTextMid()
             )
-        }
-        // 进度弧：入场时弧长从 0 生长到目标分对应角度，动画结束后静止
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 6.dp.toPx()
-            val sweep = 360f * animatedScore.value.coerceIn(0f, 100f) / 100f
-            if (sweep > 0f) {
-                drawArc(
-                    color = gold,
-                    startAngle = -90f,
-                    sweepAngle = sweep,
-                    useCenter = false,
-                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+            Spacer(modifier = Modifier.width(10.dp))
+            // 细进度条：轨道 + 金色渐变填充，长度随分值生长；无扫光、无往复动画
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(2.5.dp))
+                    .background(homeTrack())
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction)
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(2.5.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(gold.copy(alpha = 0.55f), gold)
+                            )
+                        )
                 )
             }
-        }
-        // 弧内流光：高光只贴着金色进度弧滑动，绝不越界到空白轨道。
-        // Canvas 内容固定，动画只改 graphicsLayer.rotationZ → 硬件合成、零重绘
-        if (!reduceMotion && score >= 20) {
-            LuckRingScan(gold = gold, score = score)
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = "$score",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            Text(
-                text = "LUCK",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
-                fontSize = 10.sp
+                text = "${animatedScore.value.toInt()}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Black,
+                color = gold
             )
         }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "$verdict · $confidenceName",
+            style = MaterialTheme.typography.labelSmall,
+            color = homeTextLow()
+        )
     }
 }
 
-/** 运气环弧内流光：高光段从进度弧起点滑向终点再折返，只更新图层旋转角，不掉帧 */
-@Composable
-private fun LuckRingScan(gold: Color, score: Int) {
-    val totalSweep = 360f * score.coerceIn(0, 100) / 100f
-    // 高光段自身宽度约 44°，travel 保证其前端不越过弧尾
-    val headSpan = 44f
-    val travel = (totalSweep - headSpan).coerceAtLeast(0f)
-    if (travel <= 1f) return
 
-    val transition = rememberInfiniteTransition(label = "luckScan")
-    val angle by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = travel,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "scanAngle"
-    )
-    Canvas(
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer { rotationZ = angle }
-    ) {
-        val stroke = 8.dp.toPx()
-        // 柔光晕（比进度弧略宽，制造辉光感）
-        drawArc(
-            color = gold.copy(alpha = 0.22f),
-            startAngle = -90f,
-            sweepAngle = headSpan,
-            useCenter = false,
-            style = Stroke(width = (stroke + 4.dp.toPx()), cap = StrokeCap.Round)
-        )
-        // 亮段主体
-        drawArc(
-            color = gold.copy(alpha = 0.95f),
-            startAngle = -90f,
-            sweepAngle = headSpan,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-        // 白热核心（前端更亮，突出"流动方向"）
-        drawArc(
-            color = Color.White.copy(alpha = 0.9f),
-            startAngle = -90f + headSpan * 0.45f,
-            sweepAngle = headSpan * 0.45f,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-    }
-}
 
 // ============================ 保底进度网格 ============================
 
@@ -519,11 +530,9 @@ private fun PityGridCard(
     modifier: Modifier = Modifier
 ) {
     if (poolStats == null) {
-        Surface(
+        GlassSurface(
             modifier = modifier,
-            shape = WishShapes.md,
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            shape = WishShapes.md
         ) {
             Column(
                 modifier = Modifier
@@ -535,13 +544,13 @@ private fun PityGridCard(
                     text = label,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = homeTextLow()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "暂无数据",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    color = homeTextWeak()
                 )
             }
         }
@@ -559,18 +568,16 @@ private fun PityGridCard(
         pityProgressColor(poolStats.currentPity, poolStats.pityCeiling)
     }
 
-    Surface(
+    GlassSurface(
         modifier = modifier,
-        shape = WishShapes.md,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        shape = WishShapes.md
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = homeTextMid()
             )
             Spacer(modifier = Modifier.height(4.dp))
             Row(
@@ -585,7 +592,7 @@ private fun PityGridCard(
                 Text(
                     text = "/${poolStats.pityCeiling}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = homeTextLow()
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -596,14 +603,22 @@ private fun PityGridCard(
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(WishShapes.pill)
-                    .background(MaterialTheme.colorScheme.outlineVariant)
+                    .background(homeTrack())
             ) {
                 Box(
                     modifier = Modifier
                         .width(maxWidth * pityPercent)
                         .height(6.dp)
                         .clip(WishShapes.pill)
-                        .background(progressColor)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    progressColor.copy(alpha = 0.55f),
+                                    progressColor,
+                                    progressColor.copy(alpha = 0.9f)
+                                )
+                            )
+                        )
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
@@ -617,13 +632,13 @@ private fun PityGridCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = if (isNovice) {
                     when {
-                        pityLeft <= 0 -> MaterialTheme.colorScheme.onSurfaceVariant
-                        poolStats.currentPity >= 15 -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        pityLeft <= 0 -> homeTextHigh()
+                        poolStats.currentPity >= 15 -> if (isWishDark()) Color(0xFF8AB4FF) else Color(0xFF1E4FD8)
+                        else -> homeTextHigh()
                     }
                 } else {
                     if (poolStats.currentPity >= 60) progressColor
-                    else MaterialTheme.colorScheme.onSurfaceVariant
+                    else homeTextHigh()
                 }
             )
             Spacer(modifier = Modifier.height(4.dp))
@@ -636,7 +651,7 @@ private fun PityGridCard(
                 Text(
                     text = "总 ${poolStats.totalPulls} 抽",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                    color = homeTextMid()
                 )
                 Text(
                     text = "五星 ${poolStats.fiveStarCount}",
@@ -699,7 +714,7 @@ private fun RecentFiveStarCard(
     playGlow: Boolean = false
 ) {
     val glow = rememberFiveStarGlow(play = playGlow)
-    Surface(
+    GlassSurface(
         modifier = Modifier
             .width(130.dp)
             .drawBehind {
@@ -711,8 +726,7 @@ private fun RecentFiveStarCard(
                 }
             },
         shape = WishShapes.md,
-        border = BorderStroke(1.5.dp, FiveStarColor.copy(alpha = 0.55f)),
-        color = MaterialTheme.colorScheme.surface
+        borderStroke = BorderStroke(1.5.dp, FiveStarColor.copy(alpha = 0.4f))
     ) {
         Box {
             Column(modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 28.dp, bottom = 12.dp)) {
@@ -720,7 +734,7 @@ private fun RecentFiveStarCard(
                     text = record.itemName,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = homeTextHigh(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -735,7 +749,7 @@ private fun RecentFiveStarCard(
                 Text(
                     text = record.time.substringBefore(" ").ifEmpty { record.time },
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = homeTextLow()
                 )
             }
             Surface(
@@ -786,19 +800,17 @@ private fun LuckDetailCard(uiState: HomeUiState) {
     val upRate = if (charFiveStars > 0) upFiveStars.toDouble() / charFiveStars * 100 else 0.0
 
     val success = wishSuccess()
-    Surface(
+    GlassSurface(
         modifier = Modifier.fillMaxWidth(),
-        shape = WishShapes.md,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        shape = WishShapes.md
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            LuckDetailRow("平均出金", if (totalFiveStars > 0) String.format("%.1f 抽", avgPulls) else "—", MaterialTheme.colorScheme.primary)
+            LuckDetailRow("平均出金", if (totalFiveStars > 0) String.format("%.1f 抽", avgPulls) else "—", wishAccentGold())
             LuckDetailRow("最近五星", if (recentInterval > 0) "$recentInterval 抽" else "—", success)
             LuckDetailRow("最非", if (worstLuck > 0) "$worstLuck 抽" else "—", wishWarning())
             LuckDetailRow("最欧", if (bestLuck > 0) "$bestLuck 抽" else "—", success)
             LuckDetailRow("UP成功率", String.format("%.0f%%", upRate), MaterialTheme.colorScheme.primary)
-            LuckDetailRow("总抽数", "$totalPulls", MaterialTheme.colorScheme.onSurface)
+            LuckDetailRow("总抽数", "$totalPulls", homeTextHigh())
         }
     }
 }
@@ -815,7 +827,7 @@ private fun LuckDetailRow(label: String, value: String, valueColor: Color) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = homeTextLow()
         )
         Text(
             text = value,
@@ -849,9 +861,13 @@ private fun SyncSection(
                     Button(
                         onClick = { viewModel.sync() },
                         modifier = Modifier.fillMaxWidth(),
-                        shape = WishShapes.lg
+                        shape = WishShapes.lg,
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFE7C877),
+                            contentColor = Color(0xFF1A1508)
+                        )
                     ) {
-                        Text("同步抽卡记录")
+                        Text("同步抽卡记录", fontWeight = FontWeight.Bold)
                     }
                 }
                 is SyncState.Loading -> {
@@ -914,31 +930,33 @@ private fun SyncSection(
             }
         }
     } else {
-        Surface(
+        GlassSurface(
             modifier = Modifier.fillMaxWidth(),
-            shape = WishShapes.md,
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            shape = WishShapes.md
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "本地数据",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = homeTextHigh()
                     )
                     Text(
                         text = "UID: ${uiState.uid ?: "未绑定"}（手动导入）",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = homeTextLow()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
+                    Button(
                         onClick = { navController.navigate(Screen.Auth.route) },
                         modifier = Modifier.fillMaxWidth(),
-                        shape = WishShapes.lg
+                        shape = WishShapes.lg,
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFE7C877),
+                            contentColor = Color(0xFF1A1508)
+                        )
                     ) {
-                    Text("登录米游社以同步最新数据")
+                    Text("登录米游社以同步最新数据", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -949,12 +967,33 @@ private fun SyncSection(
 
 @Composable
 private fun SectionHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurface
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 3.dp, height = 14.dp)
+                .clip(WishShapes.pill)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            wishAccentGold().copy(alpha = 0.95f),
+                            wishAccentGold().copy(alpha = 0.45f)
+                        )
+                    )
+                )
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
 }
 
 // ============================ 运气评语 ============================
@@ -988,3 +1027,36 @@ private fun luckVerdictText(score: Int): String = when {
     score >= 25 -> "低于模型预期"
     else -> "远低于模型预期"
 }
+
+
+// ============================ 首页卡片双主题 helpers ============================
+// 深色模式：卡片为深色夜空玻璃，文字白系鎏金；
+// 浅色模式：卡片为白/近白，文字自动切到深蓝黑 —— 杜绝"白字浮白卡"与整片深蓝大卡。
+@Composable
+private fun homeTextHigh(): Color =
+    if (isWishDark()) Color.White else Color(0xFF17203A)
+
+@Composable
+private fun homeTextMid(): Color =
+    if (isWishDark()) Color.White.copy(alpha = 0.62f) else Color(0xFF17203A).copy(alpha = 0.68f)
+
+@Composable
+private fun homeTextLow(): Color =
+    if (isWishDark()) Color.White.copy(alpha = 0.45f) else Color(0xFF17203A).copy(alpha = 0.55f)
+
+@Composable
+private fun homeTextWeak(): Color =
+    if (isWishDark()) Color.White.copy(alpha = 0.30f) else Color(0xFF17203A).copy(alpha = 0.36f)
+
+@Composable
+private fun homeTrack(): Color =
+    if (isWishDark()) Color.White.copy(alpha = 0.14f) else Color(0xFF17203A).copy(alpha = 0.12f)
+
+@Composable
+private fun homeChip(): Color =
+    if (isWishDark()) Color.White.copy(alpha = 0.07f) else Color(0xFF17203A).copy(alpha = 0.05f)
+
+@Composable
+private fun homeCardBorder(): Color =
+    if (isWishDark()) Color.White.copy(alpha = 0.08f) else Color(0xFF17203A).copy(alpha = 0.10f)
+

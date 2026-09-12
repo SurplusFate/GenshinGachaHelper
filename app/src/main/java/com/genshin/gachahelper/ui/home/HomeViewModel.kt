@@ -88,7 +88,12 @@ class HomeViewModel @Inject constructor(
     fun loadData() {
         viewModelScope.launch {
             loadMutex.withLock {
-                _uiState.value = _uiState.value.copy(isLoading = true)
+                // 已有数据时静默刷新：不把 isLoading 置 true，避免每次切回 tab /
+                // 事件刷新时整页先闪 loading 再重绘，造成"卡顿/闪屏"的观感。
+                val snapshot = _uiState.value
+                if (snapshot.report == null && snapshot.characterStats == null) {
+                    _uiState.value = snapshot.copy(isLoading = true)
+                }
                 val loggedIn = authRepository.isLoggedIn()
                 val authUid = authRepository.getUid()
                 val nickname = authRepository.getNickname()

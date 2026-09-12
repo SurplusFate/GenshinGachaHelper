@@ -100,6 +100,18 @@ class GachaRepository @Inject constructor(
     suspend fun deleteAllByAccount(accountId: Long) =
         gachaRecordDao.deleteAllByAccount(accountId)
 
+    /**
+     * 清空本地全部账号数据：抽卡记录 + 账号表。
+     *
+     * 用于退出登录：退出后所有页面（首页/历史/统计/报告）必须无残留数据，
+     * 不能出现"已退出但仍能看到上一个账号抽卡记录"的情况。
+     * 卡池静态数据（pool 表）不属于个人数据，保留。
+     */
+    suspend fun clearUserData() {
+        gachaRecordDao.deleteAll()
+        accountDao.deleteAll()
+    }
+
     suspend fun getRecordKeysByAccount(accountId: Long): List<RecordKey> =
         gachaRecordDao.getRecordKeysByAccount(accountId)
 

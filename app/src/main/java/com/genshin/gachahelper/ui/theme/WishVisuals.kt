@@ -64,6 +64,62 @@ fun Modifier.wishSkyBackground(dark: Boolean = isWishDark()): Modifier {
     return this.background(Brush.verticalGradient(listOf(top, bottom)))
 }
 
+/**
+ * 首页夜空鎏金背景：跟随主题——深色模式保留深空渐变；
+ * 浅色模式使用冷调浅蓝白渐变（与外壳 WishLight 系同色相），
+ * 避免暖黄底与浅色外壳互相冲突造成"三截色"割裂感。
+ */
+@Composable
+fun Modifier.homeNightBackdrop(dark: Boolean = isWishDark()): Modifier {
+    return if (dark) {
+        this.background(
+            Brush.verticalGradient(
+                0f to Color(0xFF0A1128),
+                0.42f to Color(0xFF0D1531),
+                1f to Color(0xFF060A1C)
+            )
+        )
+    } else {
+        this.background(
+            Brush.verticalGradient(
+                0f to Color(0xFFF8FAFF),
+                0.5f to Color(0xFFF2F5FD),
+                1f to Color(0xFFE8ECF9)
+            )
+        )
+    }
+}
+
+/**
+ * 首页玻璃卡片底色：深色模式为半透明白玻璃（透出深空背景）；
+ * 浅色模式为纯白卡，与整个 App 的浅色外壳统一 —— 首页不再出现整片深蓝大卡。
+ */
+@Composable
+fun wishCardBg(): Color {
+    return if (isWishDark()) {
+        Color.White.copy(alpha = 0.05f)
+    } else {
+        Color(0xFFFFFFFF)
+    }
+}
+
+/** 首页英雄卡玻璃质感渐变：深色为半透明深蓝 + 顶部鎏金光晕；浅色为白→极浅蓝白渐变 */
+@Composable
+fun Modifier.homeHeroCardGradient(): Modifier {
+    val colors = if (isWishDark()) {
+        listOf(
+            Color(0xFF1A2448).copy(alpha = 0.94f),
+            Color(0xFF101836).copy(alpha = 0.96f)
+        )
+    } else {
+        listOf(
+            Color(0xFFFFFFFF),
+            Color(0xFFEFF2FC)
+        )
+    }
+    return this.background(Brush.linearGradient(colors))
+}
+
 @Composable
 fun Modifier.wishCardGradient(
     start: Color = if (isWishDark()) WishDark.bgFloat else WishLight.bgFloat,

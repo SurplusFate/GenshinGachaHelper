@@ -14,3 +14,7 @@ local.properties
 *.aab
 *.keystore
 !debug.keystore
+
+# 构建/调试日志（不应入库）
+temp_build.log
+build*.log

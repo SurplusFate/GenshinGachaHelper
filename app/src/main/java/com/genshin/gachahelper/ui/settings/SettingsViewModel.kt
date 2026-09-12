@@ -217,9 +217,11 @@ class SettingsViewModel @Inject constructor(
 
     fun logout() {
         viewModelScope.launch {
-            // 退出登录：只清除登录凭证，不删除本地抽卡数据和 AccountEntity
-            // 本地数据 UID 保留，用户可以用相同 UID 重新登录或继续使用本地数据
+            // 退出登录 = 关闭自动签到（取消周期任务 + 清通知）+ 清登录凭证 + 清空本地抽卡数据。
+            // 数据必须一次性清干净：否则历史页 / 统计页会继续展示上一个账号的记录。
+            signInRepository.onLogout()
             authRepository.logout()
+            gachaRepository.clearUserData()
             sessionEventBus.emit(SessionEvent.LogoutCompleted)
             loadSettings()
         }
@@ -227,11 +229,8 @@ class SettingsViewModel @Inject constructor(
 
     fun clearAllData() {
         viewModelScope.launch {
-            val authUid = authRepository.getUid()
-            val account = gachaRepository.getActiveAccount(authUid)
-            if (account != null) {
-                gachaRepository.deleteAllByAccount(account.id)
-            }
+            // 清除全部本地抽卡数据（记录 + 账号），保证各页面无残留
+            gachaRepository.clearUserData()
             sessionEventBus.emit(SessionEvent.DataCleared)
             loadSettings()
         }

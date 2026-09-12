@@ -86,7 +86,11 @@ class StatsViewModel @Inject constructor(
     fun loadStats() {
         viewModelScope.launch {
             loadMutex.withLock {
-                _uiState.value = _uiState.value.copy(isLoading = true)
+                // 已有数据时静默刷新：避免切回统计页 / 事件刷新时整页闪 loading。
+                val snapshot = _uiState.value
+                if (snapshot.report == null) {
+                    _uiState.value = snapshot.copy(isLoading = true)
+                }
 
                 val uid = authRepository.getUid()
                 val account = gachaRepository.getActiveAccount(uid)
