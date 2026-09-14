@@ -26,13 +26,21 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      # release.keystore 未入库（.gitignore 已屏蔽），CI 生成一次性密钥供签名校验通过
+      # release.keystore 未入库（.gitignore 已屏蔽），CI 现场生成一次性密钥供签名校验通过。
+      # 口令随机生成并经 GITHUB_ENV 传给 Gradle，仓库与 workflow 中都不留明文口令。
       - name: Generate throwaway keystore
         run: |
+          PASS="$(openssl rand -hex 16)"
+          echo "KEYSTORE_STORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
+          echo "KEYSTORE_KEY_PASSWORD=$PASS" >> "$GITHUB_ENV"
+          echo "KEYSTORE_KEY_ALIAS=gacha-release" >> "$GITHUB_ENV"
           keytool -genkeypair -v -keystore release.keystore -alias gacha-release \
             -keyalg RSA -keysize 2048 -validity 3650 \
-            -storepass 123456 -keypass 123456 \
+            -storepass "$PASS" -keypass "$PASS" \
             -dname "CN=CI, OU=CI, O=CI, L=CI, ST=CI, C=CN"
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon

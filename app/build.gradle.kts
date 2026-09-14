@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -7,16 +9,29 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// ===== 签名凭据读取 =====
+// 优先级：环境变量 > local.properties。
+// local.properties 已被 .gitignore 屏蔽，真实 keystore 口令不会进入版本库；
+// CI 侧改用随机生成的一次性口令（见 .github/workflows/android.yml）。
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
+fun signingValue(propName: String, envName: String): String? =
+    keystoreProps.getProperty(propName) ?: System.getenv(envName)
+
 android {
     namespace = "com.genshin.gachahelper"
     compileSdk = 36
 
     signingConfigs {
         create("release") {
-            storeFile = file("$rootDir/release.keystore")
-            storePassword = "123456"
-            keyAlias = "gacha-release"
-            keyPassword = "123456"
+            // 口令/别名一律外置，禁止硬编码入库
+            storeFile = file(signingValue("keystore.file", "KEYSTORE_FILE") ?: "$rootDir/release.keystore")
+            storePassword = signingValue("keystore.storePassword", "KEYSTORE_STORE_PASSWORD")
+            keyAlias = signingValue("keystore.keyAlias", "KEYSTORE_KEY_ALIAS") ?: "gacha-release"
+            keyPassword = signingValue("keystore.keyPassword", "KEYSTORE_KEY_PASSWORD")
         }
     }
 
