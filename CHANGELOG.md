@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 新增
+- 单元测试：新增 `DsSignerTest`（12 项），覆盖 DS1 / DS2 摘要自洽性、`b`/`q` 拼接规则、`randomDeviceId` UUID v4 格式等；单测总数 56 项
+- 文档：新增 `CHANGELOG.md`、`SECURITY.md`、`CONTRIBUTING.md`
+
 ### 变更
 - 构建：签名凭据（keystore 路径、口令、别名）外移至 `local.properties` / 环境变量，源码中不再硬编码口令
 - CI：新增 `testDebugUnitTest` 单元测试步骤；一次性签名密钥改为随机口令生成
@@ -27,7 +31,7 @@
 ### 变更
 - 登录方式精简：移除 WebView 登录，仅保留米游社扫码登录
 - 构建链升级：AGP 8.13.2 / Kotlin 2.3.21 / KSP 2.3.12 / Compose BOM 2026.03.01 / Hilt 2.60.1 / Room 2.8.5，compileSdk & targetSdk 升至 36
-- release 包开启 R8 minify，APK 体积由约 13.5MB 降至约 2.3MB
+- release 包开启 R8 minify（此前 1.7.x 为 `isMinifyEnabled = false`），APK 体积由约 12.9MB 降至约 2.3MB
 
 ### 安全
 - 新增 MIT LICENSE
