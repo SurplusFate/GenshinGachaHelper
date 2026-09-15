@@ -1,6 +1,5 @@
 *.iml
 .gradle
-/local.properties
 /.idea
 .DS_Store
 /build
@@ -9,12 +8,16 @@
 .cxx
 local.properties
 /app/build
-/app/release
 *.apk
 *.aab
 *.keystore
-!debug.keystore
 
 # 构建/调试日志（不应入库）
 temp_build.log
 build*.log
+
+# Kotlin / KSP 增量缓存
+.kotlin/
+
+# JVM 崩溃转储
+*.hprof

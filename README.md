@@ -97,7 +97,10 @@ app/src/main/java/com/genshin/gachahelper/
 
 生成的 APK 位于 `app/build/outputs/apk/release/` 或 `app/build/outputs/apk/debug/`。
 
-> release 构建需在 `local.properties` / 环境变量中提供签名配置；未配置签名时产物为 unsigned。
+> **签名说明（现行）**：`release.keystore` 与任何明文口令均不入库。release 构建需在
+> `local.properties`（或环境变量 `KEYSTORE_*`）中提供签名配置，未提供时 release 产物为
+> unsigned；`assembleDebug` 使用 Android 默认 debug keystore，clone 后无需任何配置即可构建。
+> 早期「keystore 入仓 + debug/release 共用 release 签名」的做法已于 2026-09-15 撤销。
 
 ## 使用说明
 
@@ -113,6 +116,33 @@ app/src/main/java/com/genshin/gachahelper/
 - [BTMuli/TeyvatGuide](https://github.com/BTMuli/TeyvatGuide) — Token 管理参考
 
 ## 迭代记录
+
+### 2026-09-15 · 规范性整改（安全 / 构建 / 文档）
+
+**安全**
+
+- `allowBackup` 关闭：凭证以明文存于 DataStore，禁止随系统备份外流
+- `AuthViewModel` 调试信息（stoken / cookie_token / authkey 片段）改为仅 debug 构建保留，release 一律剥离
+- `GachaApiClient` 错误日志写盘前脱敏 authkey / cookie / token，并限制最多保留 10 份
+- `CrashCatcher` 不再写公共「下载」目录，仅写应用内部存储，并对堆栈兜底脱敏
+- `OkHttpClient` 关闭自动跟随重定向，避免 Cookie 随跨域 3xx 被转发到第三方主机
+- 移除已无用途的 `WRITE_EXTERNAL_STORAGE`；删除 `MainActivity` 上无处理逻辑的 `content/json` VIEW intent-filter
+
+**构建 / CI**
+
+- 修复 debug 绑定 release 签名、导致全新 clone 后 `assembleDebug` 失败的问题：debug 回归 Android 默认 debug keystore，
+  release 仅在 keystore 与口令齐备时启用签名，否则产物为 unsigned
+- `proguard-rules.pro` 移除 `config.model` / `data.remote` / `network` 三条指向不存在包的无效 keep 规则
+- 移除无引用依赖：coil、kotlinx-serialization、okhttp logging-interceptor 及对应插件
+- Room 开启 `exportSchema`（schema 输出至 `app/schemas/`）；wrapper 补 `distributionSha256Sum`
+- 版本目录统一收口：测试依赖不再内联硬编码，core-ktx / lifecycle / navigation / paging / datastore / coroutines / work
+  升级到与 compileSdk 36 匹配的代际
+- CI 增加 `lintDebug` 与 `assembleRelease`，补 `permissions` / `concurrency`，action 全部按 commit SHA 固定
+
+**文档**
+
+- 新增 `.editorconfig`；`.gitignore` 去冗余
+- 本文件下方 2026-08-25 起的「keystore 入仓」「debug/release 共用 release 签名」描述均已失效，现行为：keystore 与口令一律不入库
 
 ### 2026-09-12 · v1.8.3 液态玻璃 UI + 稳定性整改（tag `v1.8.3`）
 
@@ -506,7 +536,7 @@ v1.4.x 版本在实际使用中发现多处统计口径和计算公式错误，�
 **版本信息**
 
 - `versionCode = 6`，`versionName = "1.3.0"`
-- `release.keystore` 纳入版本控制（`git add -f`，不受 `.gitignore` 的 `*.keystore` 规则影响），任何机器 clone 后 `./gradlew assembleRelease` 即可用同一证书签名
+- `release.keystore` 纳入版本控制（`git add -f`，不受 `.gitignore` 的 `*.keystore` 规则影响），任何机器 clone 后 `./gradlew assembleRelease` 即可用同一证书签名（⚠️ **已于 2026-09-15 撤销：keystore 不再入库**）
 - `app/build.gradle.kts` 的 `storeFile` 从绝对路径改为相对路径 `file("$rootDir/release.keystore")`
 - 证书指纹（本次起新证书，后续版本复用）：
   - SHA-1: `0F:86:65:32:AC:6D:87:86:0B:0E:DE:F3:35:43:37:70:11:14:5C:71`
@@ -568,6 +598,8 @@ Paging 是流式加载（每页 20 条），header 渲染时当天可能只加�
    - SettingsScreen 原「接口配置」位置替换为三选一 RadioGroup
 4. **签名统一**（本 commit）：debug / release 均使用同一 release keystore，
    保证发布 APK 与日常构建 APK 可互相覆盖安装。
+   （⚠️ **已于 2026-09-15 调整**：该做法会让全新 clone 因缺 keystore 而无法 `assembleDebug`，
+   现改为 debug 使用 Android 默认 debug keystore。）
 
 ### 2026-08-24 · 删除接口配置功能 + 新增白天/夜间主题（commit `a0e1ea9`）
 

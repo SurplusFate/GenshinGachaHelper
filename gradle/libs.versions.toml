@@ -5,19 +5,22 @@ ksp = "2.3.12"
 composeBom = "2026.03.01"
 backdrop = "1.0.6"
 hilt = "2.57.2"
+hiltNavigation = "1.1.0"
 room = "2.8.5"
+paging = "3.3.2"
 retrofit = "2.9.0"
 okhttp = "4.12.0"
-coroutines = "1.7.3"
-lifecycle = "2.7.0"
-navigation = "2.7.7"
-datastore = "1.0.0"
-coil = "2.5.0"
+coroutines = "1.9.0"
+lifecycle = "2.9.4"
+navigation = "2.8.9"
+datastore = "1.1.7"
+gson = "2.10.1"
 zxing = "3.5.3"
-work = "2.9.0"
+work = "2.10.1"
 hiltWork = "1.1.0"
-coreKtx = "1.12.0"
-activityCompose = "1.8.2"
+coreKtx = "1.16.0"
+activityCompose = "1.10.1"
+junit = "4.13.2"
 
 [libraries]
 # Core
@@ -34,9 +37,9 @@ androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graph
 androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
-kyant-backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigation" }
+kyant-backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
 
 # Room
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
@@ -45,8 +48,8 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 androidx-room-paging = { group = "androidx.room", name = "room-paging", version.ref = "room" }
 
 # Paging
-androidx-paging-runtime = { group = "androidx.paging", name = "paging-runtime", version = "3.2.1" }
-androidx-paging-compose = { group = "androidx.paging", name = "paging-compose", version = "3.2.1" }
+androidx-paging-runtime = { group = "androidx.paging", name = "paging-runtime", version.ref = "paging" }
+androidx-paging-compose = { group = "androidx.paging", name = "paging-compose", version.ref = "paging" }
 
 # DataStore
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
@@ -54,7 +57,7 @@ androidx-datastore-preferences = { group = "androidx.datastore", name = "datasto
 # Hilt
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version = "1.1.0" }
+hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigation" }
 hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref = "hiltWork" }
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 
@@ -62,25 +65,24 @@ androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx"
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
 retrofit-gson = { group = "com.squareup.retrofit2", name = "converter-gson", version.ref = "retrofit" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
-okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 
 # Kotlin
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
-kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version = "1.6.2" }
 
-# Image
-coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
-
-# Gson
-gson = { group = "com.google.code.gson", name = "gson", version = "2.10.1" }
+# Gson（仅使用 JsonParser/JsonObject 树解析，无反射式绑定）
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 
 # QR Code
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
+# Testing
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+kotlin-test-junit = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlin" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

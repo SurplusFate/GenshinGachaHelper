@@ -101,14 +101,29 @@ class GachaApiClient @Inject constructor(
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val file = File(errorDir, "error_${timestamp}.txt")
             file.writeText(
-                "URL: $url\n" +
+                "URL: ${redact(url)}\n" +
                     "Status: $statusCode\n" +
                     "Time: ${Date()}\n" +
-                    "Response:\n$responseBody\n"
+                    "Response:\n${redact(responseBody)}\n"
             )
+            pruneErrorLogs(errorDir)
         } catch (_: Exception) {
             // 日志写入失败不影响主流程
         }
+    }
+
+    /** 凭证脱敏：URL 带 authkey、响应体常带 cookie_token / stoken，必须打码后落盘 */
+    private fun redact(text: String): String = text
+        .replace(Regex("(authkey=)[^&\\s\"']+", RegexOption.IGNORE_CASE)) { m -> "${m.groupValues[1]}<redacted>" }
+        .replace(Regex("(cookie_token|ltoken|stoken|login_ticket)=[^;&\\s\"']+", RegexOption.IGNORE_CASE)) { m -> "${m.groupValues[1]}=<redacted>" }
+        .replace(Regex("\"(cookie_token|ltoken|stoken|login_ticket)\"\\s*:\\s*\"[^\"]*\"", RegexOption.IGNORE_CASE)) { m -> "\"${m.groupValues[1]}\":\"<redacted>\"" }
+
+    /** 只保留最近 10 份错误日志，避免日志文件无上限堆积 */
+    private fun pruneErrorLogs(dir: File) {
+        val logs = dir.listFiles { f -> f.isFile && f.name.startsWith("error_") } ?: return
+        logs.sortedByDescending { it.lastModified() }
+            .drop(10)
+            .forEach { runCatching { it.delete() } }
     }
 
     /**

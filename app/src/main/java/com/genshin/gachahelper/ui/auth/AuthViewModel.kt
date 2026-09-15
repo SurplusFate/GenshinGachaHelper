@@ -2,6 +2,7 @@ package com.genshin.gachahelper.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.genshin.gachahelper.BuildConfig
 import com.genshin.gachahelper.auth.ApiResult
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.auth.GameRole
@@ -388,7 +389,10 @@ class AuthViewModel @Inject constructor(
     }
 
     private fun setState(reducer: AuthUiState.() -> AuthUiState) {
-        _uiState.value = _uiState.value.reducer()
+        val next = _uiState.value.reducer()
+        // debugInfo 会带上 stoken / cookie_token / authkey 等凭证片段，仅供开发期排查；
+        // release 构建一律剥离，避免随日志或用户截图外泄。
+        _uiState.value = if (BuildConfig.DEBUG) next else next.copy(debugInfo = null)
     }
 
     override fun onCleared() {

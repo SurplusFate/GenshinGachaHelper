@@ -1,12 +1,9 @@
 package com.genshin.gachahelper.core
 
-import android.content.ContentValues
 import android.content.Context
 import android.os.Build
-import android.os.Environment
 import android.os.Looper
 import android.os.Process
-import android.provider.MediaStore
 import android.util.Log
 import java.io.File
 import java.io.PrintWriter
@@ -18,10 +15,9 @@ import java.util.Locale
 /**
  * 崩溃自述器：App 闪退瞬间把完整堆栈落盘，让问题自己开口。
  *
- * 落盘双保险：
- *  1) filesDir/crash_logs/       —— App 内部存储，供下次启动弹窗读取展示
- *  2) 公共"下载"目录              —— Android 10+ 用 MediaStore（免权限）；
- *                                  Android 8/9 尝试传统公共目录（无权限则静默跳过）
+ * 落盘位置：仅 filesDir/crash_logs/（应用内部存储），随应用卸载一并清除。
+ * 不再写入公共「下载」目录：崩溃堆栈含设备信息与调用链，写入公共目录后对本机任何
+ * 应用均可见，属于不必要的信息暴露。
  */
 object CrashCatcher {
 
@@ -86,37 +82,6 @@ object CrashCatcher {
         lastSavedPath = internal.absolutePath
         Log.e(TAG, "crash saved: $lastSavedPath")
 
-        // 2) 公共下载目录
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, "原神抽卡助手_崩溃日志_$ts.txt")
-                    put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                }
-                val resolver = ctx.contentResolver
-                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                if (uri != null) {
-                    resolver.openOutputStream(uri)?.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                    Log.e(TAG, "crash also saved to Downloads: $uri")
-                }
-            } catch (t: Throwable) {
-                Log.e(TAG, "save crash to Downloads failed", t)
-            }
-        } else {
-            try {
-                val pub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                if (pub != null) {
-                    val f = File(pub, "原神抽卡助手_崩溃日志_$ts.txt")
-                    val parent = f.parentFile
-                    if (parent != null && (parent.exists() || parent.mkdirs())) {
-                        f.writeText(body)
-                    }
-                }
-            } catch (t: Throwable) {
-                Log.e(TAG, "save crash legacy failed", t)
-            }
-        }
     }
 
     private fun buildCrashText(ctx: Context, thread: Thread, throwable: Throwable): String {
@@ -149,8 +114,15 @@ object CrashCatcher {
             depth++
         }
         sb.append("\n===== END =====\n")
-        return sb.toString()
+        // 兜底脱敏：异常信息里可能夹带 authkey / cookie 等凭证，绝不落盘
+        return redact(sb.toString())
     }
+
+    /** 凭证脱敏：URL 带 authkey、响应体常带 cookie_token / stoken，必须打码后落盘 */
+    private fun redact(text: String): String = text
+        .replace(Regex("(authkey=)[^&\\s\"']+", RegexOption.IGNORE_CASE)) { m -> "${m.groupValues[1]}<redacted>" }
+        .replace(Regex("(cookie_token|ltoken|stoken|login_ticket)=[^;&\\s\"']+", RegexOption.IGNORE_CASE)) { m -> "${m.groupValues[1]}=<redacted>" }
+        .replace(Regex("\"(cookie_token|ltoken|stoken|login_ticket)\"\\s*:\\s*\"[^\"]*\"", RegexOption.IGNORE_CASE)) { m -> "\"${m.groupValues[1]}\":\"<redacted>\"" }
 
     /** 最近一次未处理的崩溃日志文件（App 内弹窗展示用） */
     fun latestPending(): File? {

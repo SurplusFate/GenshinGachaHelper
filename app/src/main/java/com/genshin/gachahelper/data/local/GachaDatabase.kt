@@ -18,7 +18,7 @@ import com.genshin.gachahelper.data.local.entity.PoolEntity
         PoolEntity::class
     ],
     version = 2,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class GachaDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao

@@ -7,21 +7,32 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# 最小权限：CI 只需读取仓库内容
+permissions:
+  contents: read
+
+# 同一分支的重复推送取消排队中的旧任务，避免并发抢占
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
+      # 所有 action 按 commit SHA 固定，避免上游 tag 被移动导致构建被投毒
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
@@ -42,12 +53,22 @@ jobs:
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
+      # lint 纳入 CI：静态检查不过即失败，防止问题回归
+      - name: Run lint
+        run: ./gradlew lintDebug --no-daemon
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      # release 走 R8 混淆 + 资源压缩，必须与 debug 一同验证，避免 release 专属规则失效
+      - name: Build release APK
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
           if-no-files-found: warn

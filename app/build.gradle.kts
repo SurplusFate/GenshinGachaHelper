@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
 }
@@ -21,17 +20,30 @@ val keystoreProps = Properties().apply {
 fun signingValue(propName: String, envName: String): String? =
     keystoreProps.getProperty(propName) ?: System.getenv(envName)
 
+// release.keystore 不入库。只有同时取到 keystore 文件与口令时才启用 release 签名；
+// 否则 release 产物为 unsigned，而 assembleDebug 始终可用（不再因缺 keystore 直接失败）。
+val releaseKeystore: File? = signingValue("keystore.file", "KEYSTORE_FILE")
+    ?.let { file(it) }
+    ?.takeIf { it.exists() }
+    ?: rootProject.file("release.keystore").takeIf { it.exists() }
+val releaseStorePassword: String? = signingValue("keystore.storePassword", "KEYSTORE_STORE_PASSWORD")
+val releaseKeyAlias: String = signingValue("keystore.keyAlias", "KEYSTORE_KEY_ALIAS") ?: "gacha-release"
+val releaseKeyPassword: String? = signingValue("keystore.keyPassword", "KEYSTORE_KEY_PASSWORD")
+val hasReleaseSigning: Boolean = releaseKeystore != null && !releaseStorePassword.isNullOrBlank()
+
 android {
     namespace = "com.genshin.gachahelper"
     compileSdk = 36
 
     signingConfigs {
-        create("release") {
-            // 口令/别名一律外置，禁止硬编码入库
-            storeFile = file(signingValue("keystore.file", "KEYSTORE_FILE") ?: "$rootDir/release.keystore")
-            storePassword = signingValue("keystore.storePassword", "KEYSTORE_STORE_PASSWORD")
-            keyAlias = signingValue("keystore.keyAlias", "KEYSTORE_KEY_ALIAS") ?: "gacha-release"
-            keyPassword = signingValue("keystore.keyPassword", "KEYSTORE_KEY_PASSWORD")
+        // 口令/别名一律外置，禁止硬编码入库；凭据缺失时不创建签名配置
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
         }
     }
 
@@ -42,7 +54,7 @@ android {
         versionCode = 55
         versionName = "1.8.3"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // 无 androidTest 源码集，不再声明悬空的 instrumentation runner
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -50,12 +62,14 @@ android {
 
     buildTypes {
         debug {
-            // 与 release 使用同一签名密钥，避免 debug / release 包签名不一致导致覆盖安装失败
-            signingConfig = signingConfigs.getByName("release")
+            // 使用 Android 默认 debug keystore：全新 clone 无需任何签名配置即可 assembleDebug
         }
         release {
             isMinifyEnabled = true
-            signingConfig = signingConfigs.getByName("release")
+            // 未提供签名凭据时不设置 signingConfig，产物为 unsigned
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -73,12 +87,19 @@ android {
     }
     buildFeatures {
         compose = true
+        // AuthViewModel 等处以 BuildConfig.DEBUG 门控调试信息，需显式开启
+        buildConfig = true
     }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+}
+
+// Room schema 导出目录（跟踪数据库结构演进）
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -126,14 +147,9 @@ dependencies {
     implementation(libs.retrofit)
     implementation(libs.retrofit.gson)
     implementation(libs.okhttp)
-    implementation(libs.okhttp.logging)
 
     // Kotlin
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.kotlinx.serialization.json)
-
-    // Image
-    implementation(libs.coil.compose)
 
     // Gson
     implementation(libs.gson)
@@ -142,7 +158,7 @@ dependencies {
     implementation(libs.zxing.core)
 
     // Testing
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.3.21")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
