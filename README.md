@@ -164,7 +164,7 @@ app/src/main/java/com/genshin/gachahelper/
 - 扫码提示改为「分屏 / 小窗」操作说明，移除 WebView 登录容器，仅保留扫码登录
 - 修复 `MainActivity.onCreate` 未调用 `super.onCreate` 导致的 `SuperNotCalledException`
 
-### 2026-08-28 · v1.7.7 首页运气环动画修复（tag `v1.7.7`）
+### 2026-09-08 · v1.7.7 首页运气环动画修复（tag `v1.7.7`）
 
 - 重构首页运气环动画：入场弧长生长 + 流光绕环
 - 流光限定在进度弧内滑动，不再越界扫空轨道
