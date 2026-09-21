@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -126,7 +127,13 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     val records: LazyPagingItems<HistoryListItem> =
         decoratedRecordsFlow.collectAsLazyPagingItems()
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            // 2026-09-20：页面顶栏已移除，内容需自行避让系统状态栏
+            // （edge-to-edge 模式下原先由 Scaffold topBar 承担该空间）
+            .statusBarsPadding()
+    ) {
         SearchBar(query = searchQuery, onQueryChange = viewModel::setSearchQuery)
 
         Spacer(modifier = Modifier.height(4.dp))

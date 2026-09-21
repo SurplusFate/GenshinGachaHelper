@@ -63,7 +63,28 @@ object DsSigner {
 
     /**
      * 生成 DS2 签名（含 body 和/或 query）
-     * 格式: t,r,md5(salt={salt}&t={t}&r={r}&b={body}&q={query})
+     *
+     * ── 2026-09 关键修复：&b 与 &q 必须**无条件**拼接 ──────────────
+     * 签名原文格式固定为：
+     *
+     *   salt={salt}&t={t}&r={r}&b={body}&q={query}
+     *
+     * **即使 body 或 query 为空，对应的 `&b=` / `&q=` 也必须保留**
+     * （留空值），不能省掉整段。
+     *
+     * 旧实现写成：
+     *   if (body.isNotBlank()) append("&b=").append(body)
+     *   if (query.isNotBlank())  append("&q=").append(query)
+     *
+     * 导致「有 body、无 query」的接口（如 verifyVerification）签名原文
+     * 少了结尾的 `&q=`，md5 与服务端计算结果不一致，服务端判定请求非法，
+     * 返回空 message 的 {"data":null,"message":"","retcode":-1}。
+     *
+     * 这解释了此前的诡异现象：dailyNote（有 query）与 createVerification
+     * （有 query）都正常，唯独 verifyVerification（无 query）必然失败。
+     * 参考 daidr/paimon-webext 的 getDS 实现确认该格式。
+     * ──────────────────────────────────────────────────────────────
+     *
      * r 为 100000-200000 随机数字
      */
     fun generateDS2(
@@ -72,16 +93,19 @@ object DsSigner {
         query: String = ""
     ): String {
         val t = (System.currentTimeMillis() / 1000).toString()
-        var r = (100000..200000).random()
-        if (r == 100000) r = 642367
-        val raw = buildString {
-            append("salt=").append(salt)
-            append("&t=").append(t)
-            append("&r=").append(r)
-            if (body.isNotBlank()) append("&b=").append(body)
-            if (query.isNotBlank()) append("&q=").append(query)
-        }
+        val r = (100000..200000).random()
+        // 注意：&b 与 &q 无条件拼接（空值也要保留），见上方说明
+        val raw = "salt=$salt&t=$t&r=$r&b=$body&q=$query"
         val c = md5(raw)
+        // 写日志：把签名原文落盘，便于 verifyVerification 失败时反查服务端
+        // 计算的签名究竟是什么（用户反馈："你就不能把完整流程记录到日志吗？"）
+        AppLog.i(
+            "DsSigner",
+            "generateDS2",
+            "salt=$salt t=$t r=$r c=$c\n" +
+                "raw_prefix=${raw.take(160)}" +
+                if (raw.length > 160) "...[total=${raw.length}]" else ""
+        )
         return "$t,$r,$c"
     }
 

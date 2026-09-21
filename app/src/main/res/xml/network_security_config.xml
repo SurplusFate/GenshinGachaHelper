@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置
+
+  ── 为什么需要这个文件 ──────────────────────────────────────────
+  极验 gt.js 0.4.9（米游社 1034 风控验证下发的组件版本）内部硬编码了：
+
+      api_server: 'api.geetest.com',
+      protocol:   'http://'
+
+  它初始化时会用 **HTTP 明文** 请求 http://api.geetest.com/gettype.php
+  获取验证图类型。而 Android 9（API 28）起系统默认禁止明文流量，
+  本项目 AndroidManifest 也显式声明了 usesCleartextTraffic="false"，
+  于是该请求被系统直接拦截。
+
+  拦截后 gt.js 会静默降级到 **failback 模式**（本地验证）：
+  用户拖动滑块看起来"通过"了，但 getValidate() 返回的 validate 是
+  组件本地算出的假值，米游社拿去极验服务端做二次校验必然失败，
+  表现为 {"data":null,"message":"","retcode":-1}（空 message 的 -1）。
+
+  这里仅对极验域名放行明文流量，其余域名仍强制 HTTPS，
+  不降低主 App 的安全性。
+  ──────────────────────────────────────────────────────────────
+-->
+<network-security-config>
+    <!-- 默认：强制 HTTPS，与 usesCleartextTraffic="false" 语义一致 -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- 例外：极验验证服务需走 HTTP（gt.js 0.4.9 硬编码 http://） -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">geetest.com</domain>
+        <domain includeSubdomains="true">geetest.cn</domain>
+        <!-- gt.js 静态资源服务器（HTTPS，但一并放行避免重定向到 HTTP 时被拦） -->
+        <domain includeSubdomains="true">static.geetest.com</domain>
+        <domain includeSubdomains="true">dn-staticdown.qbox.me</domain>
+    </domain-config>
+</network-security-config>

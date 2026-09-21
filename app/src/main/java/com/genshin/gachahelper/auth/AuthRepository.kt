@@ -109,8 +109,45 @@ class AuthRepository @Inject constructor(
         context.authDataStore.data.first()[Keys.DEVICE_FP]
 
     /**
-     * 保存 device_fp 及其种子信息
+     * 获取 device_fp 的种子 ID 与时间戳。
+     * 米游社要求把这两个值与 device_fp 一起以 Cookie 形式回传
+     * （DEVICEFP_SEED_ID / DEVICEFP_SEED_TIME），缺失会被风控拒绝。
      */
+    suspend fun getDeviceFpSeed(): Pair<String, String> {
+        val prefs = context.authDataStore.data.first()
+        return (prefs[Keys.DEVICE_FP_SEED_ID] ?: "") to
+            (prefs[Keys.DEVICE_FP_SEED_TIME] ?: "")
+    }
+
+    /**
+     * 构造带设备指纹字段的 Cookie 字符串。
+     *
+     * 米游社通过 Cookie 中的这三个字段校验"设备指纹与请求来源是否匹配"：
+     *   DEVICEFP_SEED_ID={seed};DEVICEFP_SEED_TIME={time};DEVICEFP={fp};
+     * 仅带 x-rpc-device_fp 请求头是不够的——服务端会认为指纹与 Cookie
+     * 不一致，验证接口直接返回失败（表现为空 message 的 -1）。
+     *
+     * @param baseCookie 原始登录 Cookie
+     */
+    suspend fun buildCookieWithDeviceFp(baseCookie: String): String {
+        if (baseCookie.isBlank()) return baseCookie
+        val fp = getCachedDeviceFp().orEmpty()
+        val (seedId, seedTime) = getDeviceFpSeed()
+        if (fp.isBlank()) return baseCookie
+        // seed 缺失时不要拼空字段（DEVICEFP_SEED_ID=; 会被服务端判为非法）
+        val fpPrefix = if (seedId.isBlank() || seedTime.isBlank()) {
+            "DEVICEFP=$fp; "
+        } else {
+            "DEVICEFP_SEED_ID=$seedId; DEVICEFP_SEED_TIME=$seedTime; DEVICEFP=$fp; "
+        }
+        // 分隔符统一用 "; "（分号+空格）：与 buildCookieString() 保持一致。
+        // 原实现此处用 ";" 无空格、而 baseCookie 内部用 "; " 分隔，
+        // 混用两种风格会让服务端 Cookie 解析器在边界处取到带前导空格的
+        // 键名（如 " ltuid"），进而判定登录态无效（retcode 10001）。
+        return fpPrefix + baseCookie
+    }
+
+    /** 保存 device_fp 及其种子信息 */
     suspend fun saveDeviceFp(fp: String, seedId: String, seedTime: String) {
         context.authDataStore.edit { prefs ->
             prefs[Keys.DEVICE_FP] = fp
@@ -120,17 +157,37 @@ class AuthRepository @Inject constructor(
     }
 
     /**
+     * 清除缓存的 device_fp（含种子信息）
+     * 供 5003（设备验证未通过）时强制重新向 getFp 申请指纹，避免脏缓存永久生效
+     */
+    suspend fun clearDeviceFp() {
+        context.authDataStore.edit { prefs ->
+            prefs.remove(Keys.DEVICE_FP)
+            prefs.remove(Keys.DEVICE_FP_SEED_ID)
+            prefs.remove(Keys.DEVICE_FP_SEED_TIME)
+        }
+    }
+
+    /**
      * 保存登录 Cookie 中提取的凭证（stoken、ltuid 等）
      */
+    /**
+     * 保存登录凭据。
+     *
+     * 注意：新版通行证扫码登录只下发 ltoken_v2 / cookie_token_v2，
+     * **不一定有 stoken**（stoken 恒为 null）。因此这里 stoken 允许为空，
+     * 只要 ltoken / cookie_token 之一存在即视为有效登录态
+     * （便笺、角色列表等接口用 cookie_token/ltoken 即可鉴权）。
+     */
     suspend fun saveLoginCredentials(
-        stoken: String,
+        stoken: String?,
         ltuid: String,
         mid: String? = null,
         cookieToken: String? = null,
         ltoken: String? = null
     ) {
         context.authDataStore.edit { prefs ->
-            prefs[Keys.STOKEN] = stoken
+            if (!stoken.isNullOrBlank()) prefs[Keys.STOKEN] = stoken
             prefs[Keys.LTUID] = ltuid
             mid?.let { prefs[Keys.MID] = it }
             cookieToken?.let { prefs[Keys.COOKIE_TOKEN] = it }
@@ -250,8 +307,28 @@ class AuthRepository @Inject constructor(
         }
     }
 
-    suspend fun isLoggedIn(): Boolean {
-        val prefs = context.authDataStore.data.first()
+    /**
+     * 浏览器 H5 登录态形态的精简 Cookie（2026-09-20 终极修复）。
+     *
+     * 逆向米哈游官方原神战绩 H5 工具页实证：浏览器访问时只携带
+     * stuid / ltuid / account_id / cookie_token 四个键——不带 stoken*
+     * 全家桶、mid* 系列、*v2 别名与 DEVICEFP* 指纹字段（那些是
+     * App 扫码凭据/设备指纹特征，浏览器登录态不会有）。
+     *
+     * 官方形态实验（沙箱 lab2）：该 Cookie + challenge_game:2 头的组合
+     * 可穿透 verify 风控层（-1 空 message → 10306 业务层错误）。
+     */
+    fun buildSlimBrowserCookie(baseCookie: String): String {
+        if (baseCookie.isBlank()) return baseCookie
+        val keep = setOf("stuid", "ltuid", "account_id", "cookie_token")
+        return baseCookie.split("; ")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .filter { kv -> kv.substringBefore('=').trim() in keep }
+            .joinToString("; ")
+    }
+
+    suspend fun isLoggedIn(): Boolean {        val prefs = context.authDataStore.data.first()
         val ltuid = prefs[Keys.LTUID] ?: return false
         val stoken = prefs[Keys.STOKEN]
         val cookieToken = prefs[Keys.COOKIE_TOKEN]

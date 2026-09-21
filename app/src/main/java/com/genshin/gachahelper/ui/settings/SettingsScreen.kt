@@ -1,7 +1,5 @@
 package com.genshin.gachahelper.ui.settings
 
-import android.Manifest
-import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -24,7 +23,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,23 +33,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.genshin.gachahelper.BuildConfig
+import com.genshin.gachahelper.auth.AppLog
 import com.genshin.gachahelper.ui.dockContentBottomPadding
 import com.genshin.gachahelper.ui.GlassSurface
+import com.genshin.gachahelper.ui.logexport.LogExportDialog
+import com.genshin.gachahelper.ui.logexport.shareLogFileViaIntent
 import com.genshin.gachahelper.ui.theme.ThemeMode
+import java.io.File
 
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     val importMessage by viewModel.importMessage.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
-    val dailySignEnabled by viewModel.dailySignEnabled.collectAsState()
-    val dailySignResult by viewModel.dailySignResult.collectAsState()
+    // 日志导出弹窗（2026-09-20 从首页迁入，入口在下方「关于」区块）
+    val logExportDialog by viewModel.logExportDialog.collectAsState()
     var showClearDataDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
@@ -62,25 +63,15 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         uri?.let { viewModel.importGachaData(it) }
     }
 
-    // Android 13+ 通知权限申请（仅用于展示签到结果，未授权不影响签到）
-    val context = LocalContext.current
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { /* 授权结果不阻塞流程 */ }
-    fun requestNotificationPermissionIfNeeded() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.POST_NOTIFICATIONS
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
+    // 2026-09-20：每日签到入口（开关/立即签到/通知权限申请）已整体迁至
+    // 便笺页（HomeScreen 的 DailySignInCard），设置页不再保留。
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            // 2026-09-20：页面顶栏已移除，顶部需自行避让系统状态栏
+            .statusBarsPadding()
             .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp + dockContentBottomPadding()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -168,52 +159,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             }
         }
 
-        // 每日签到
-        SettingsSection(title = "每日签到") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "米游社每日自动签到",
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = "开启后每天自动签到一次（需保持登录，App 打开时会自动补签）",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = dailySignEnabled,
-                    onCheckedChange = { enabled ->
-                        viewModel.setDailySignEnabled(enabled)
-                        if (enabled) requestNotificationPermissionIfNeeded()
-                    }
-                )
-            }
-            dailySignResult?.let { result ->
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = result,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (dailySignEnabled) {
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { viewModel.manualDailySignIn() },
-                    enabled = uiState.isLoggedIn,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("立即签到一次")
-                }
-            }
-        }
-
         // 数据管理（导入/导出/清除）
+        // （每日签到区块已于 2026-09-20 迁至便笺页）
         SettingsSection(title = "数据管理") {
             // 导入历史数据
             OutlinedButton(
@@ -242,6 +189,36 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 Text("清除所有抽卡数据")
             }
         }
+
+        // 关于（2026-09-20 新增：版本信息 + 测试期诊断用的日志导出入口，
+        // 该功能原在首页右上角浮动按钮，现收编进设置页）
+        SettingsSection(title = "关于") {
+            Text(
+                text = "当前版本: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "项目仓库: github.com/SurplusFate/GenshinGachaHelper",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "非官方工具，数据仅存本地；米游社登录凭证只用于同步抽卡记录与每日便笺。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 导出日志（诊断用）：弹窗提供 分享文件 / 复制全文 / 复制路径
+            OutlinedButton(
+                onClick = { viewModel.openLogExportDialog() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("导出日志（诊断用）")
+            }
+        }
     }
 
     // 确认对话框
@@ -266,6 +243,29 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 showLogoutDialog = false
             },
             onDismiss = { showLogoutDialog = false }
+        )
+    }
+
+    // 日志导出弹窗（2026-09-20 从首页迁入）：分享动作由 UI 层拿 Context 调起
+    logExportDialog?.let { dialog ->
+        LogExportDialog(
+            dialog = dialog,
+            onDismiss = { viewModel.dismissLogExportDialog() },
+            onShareFile = { ctx ->
+                val path = dialog.exportFilePath
+                if (path == null || !File(path).exists()) {
+                    // 缓存的导出文件被系统清理掉了 → 重新生成一份
+                    viewModel.openLogExportDialog()
+                    return@LogExportDialog
+                }
+                AppLog.i(
+                    "Settings", "shareLogFile(UI)",
+                    "file=$path size=${File(path).length()}"
+                )
+                shareLogFileViaIntent(ctx, path)
+            },
+            onCopyText = { viewModel.copyLogToClipboard() },
+            onOpenPath = { viewModel.revealLogPathInClipboard() }
         )
     }
 }

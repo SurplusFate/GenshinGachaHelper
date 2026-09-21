@@ -47,6 +47,10 @@ class GachaApp : Application(), Configuration.Provider {
         super.onCreate()
         // 崩溃自述器：任何未捕获异常先落盘，供下次启动展示堆栈（幂等补挂）
         CrashCatcher.install(this)
+        // 全流程日志系统：注册全局异常兜底 + 开启异步落盘线程。
+        // 用户反馈"靠猜"——现在把 1034 验证链路的请求/响应/DS 签名/token 全部落盘，
+        // 用户可从主页右上角"日志"按钮一键导出。幂等，重复调用无副作用。
+        com.genshin.gachahelper.auth.AppLog.bootstrap(this)
         // 进程启动即补偿一次：自动签到开启且今日未签到 → 立即补签（幂等，带防抖）
         appScope.launch { signInRepository.onLaunchOrBoot() }
         // 登录完成后恢复可能被暂停的自动签到（重新注册周期任务并补签）

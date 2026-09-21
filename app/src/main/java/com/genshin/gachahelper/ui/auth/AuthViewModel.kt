@@ -143,13 +143,46 @@ class AuthViewModel @Inject constructor(
                                 val stoken = result.data.stoken
                                 val mid = result.data.mid
                                 val aid = result.data.aid
-                                if (!stoken.isNullOrBlank() && !aid.isNullOrBlank()) {
-                                    // 新 API 直接返回 stoken，无需再换 token
-                                    savePassportCredentialsAndFetchRoles(stoken, mid, aid)
+                                val ltoken = result.data.ltoken
+                                val cookieToken = result.data.cookieToken
+                                // 新版通行证扫码登录的凭据来自响应头 Set-Cookie
+                                // （ltoken_v2 / cookie_token_v2），stoken 可能为
+                                // null。只要拿到 ltuid + 任一 token 即可继续。
+                                if (!aid.isNullOrBlank() &&
+                                    (!stoken.isNullOrBlank() ||
+                                        !ltoken.isNullOrBlank() ||
+                                        !cookieToken.isNullOrBlank())
+                                ) {
+                                    savePassportCredentialsAndFetchRoles(
+                                        stoken = stoken,
+                                        mid = mid,
+                                        aid = aid,
+                                        ltoken = ltoken,
+                                        cookieToken = cookieToken
+                                    )
                                 } else {
+                                    // 用户最新反馈："扫码确认成功 stoken=null"
+                                    // —— 把这次失败的关键凭据 + Set-Cookie + tokens 完整记录
+                                    com.genshin.gachahelper.auth.AppLog.e(
+                                        "Auth", "ConfirmedNoCreds",
+                                        "扫码确认成功但未拿到任何登录凭据\n" +
+                                            "aid=$aid mid=${mid ?: "<empty>"}\n" +
+                                            "stoken_present=${!stoken.isNullOrBlank()} " +
+                                            "ltoken_present=${!ltoken.isNullOrBlank()} " +
+                                            "cookieToken_present=${!cookieToken.isNullOrBlank()}\n" +
+                                            "tokens_raw=${result.data.tokensRaw.take(300)}\n" +
+                                            "Set-Cookie_lines=${result.data.setCookieHeader.lines().size} " +
+                                            "first_2_lines=${result.data.setCookieHeader.lines().take(2).joinToString(" | ")}"
+                                    )
                                     setState {
                                         copy(
-                                            error = "扫码确认成功，但获取凭证失败\nstoken=${stoken?.take(10)}..., mid=$mid, aid=$aid",
+                                            error = "扫码确认成功，但未获取到登录凭证\n" +
+                                                "aid=$aid, mid=$mid\n" +
+                                                "stoken=${stoken?.take(10) ?: "null"}, " +
+                                                "ltoken=${ltoken?.take(10) ?: "null"}, " +
+                                                "cookie_token=${cookieToken?.take(10) ?: "null"}\n" +
+                                                "tokens=${result.data.tokensRaw.take(180)}\n" +
+                                                "Set-Cookie: ${result.data.setCookieHeader.take(180)}",
                                             phase = AuthPhase.QR_DISPLAY,
                                             qrBitmap = null,
                                             debugInfo = result.data.rawResponse
@@ -195,66 +228,33 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    private fun savePassportCredentialsAndFetchRoles(stoken: String, mid: String?, aid: String) {
+    private fun savePassportCredentialsAndFetchRoles(
+        stoken: String?,
+        mid: String?,
+        aid: String,
+        ltoken: String? = null,
+        cookieToken: String? = null
+    ) {
+        com.genshin.gachahelper.auth.AppLog.i(
+            "Auth", "savePassportCredentials",
+            "扫码确认 aid=$aid mid=${mid ?: "<empty>"} " +
+                "stoken_present=${!stoken.isNullOrBlank()} " +
+                "ltoken_present=${!ltoken.isNullOrBlank()} " +
+                "cookieToken_present=${!cookieToken.isNullOrBlank()}"
+        )
         setState {
             copy(
                 phase = AuthPhase.EXCHANGING_TOKEN,
-                statusText = "正在换取 cookie_token...",
+                statusText = "正在获取登录凭证...",
                 error = null,
-                debugInfo = "扫码确认成功，正在换取 cookie_token...\nstoken: ${stoken.take(10)}...\naid: $aid\nmid: ${mid ?: "无"}"
+                debugInfo = "扫码确认成功\nstoken: ${stoken?.take(10) ?: "无"}\n" +
+                    "ltoken: ${ltoken?.take(10) ?: "无"}\n" +
+                    "cookie_token: ${cookieToken?.take(10) ?: "无"}\naid: $aid\nmid: ${mid ?: "无"}"
             )
         }
 
         viewModelScope.launch {
-            // 先保存 stoken（getCookieTokenByStoken 内部会用 device_id）
-            authRepository.saveLoginCredentials(
-                stoken = stoken,
-                ltuid = aid,
-                mid = mid
-            )
-
-            // 步骤1：用 stoken 换 cookie_token（必需，否则 getUserGameRolesByCookie 返回 -100）
-            var cookieToken: String? = null
-            when (val cookieResult = mihoyoApi.getCookieTokenByStoken(stoken, aid, mid)) {
-                is ApiResult.Success -> {
-                    cookieToken = cookieResult.data
-                    setState {
-                        copy(
-                            debugInfo = "cookie_token 获取成功: ${cookieToken.take(16)}...\n正在换取 ltoken..."
-                        )
-                    }
-                }
-                is ApiResult.Error -> {
-                    setState {
-                        copy(
-                            debugInfo = "cookie_token 获取失败: ${cookieResult.message}\n${cookieResult.rawResponse.take(300)}"
-                        )
-                    }
-                    // cookie_token 失败也可以尝试继续（部分接口可能不需要）
-                }
-            }
-
-            // 步骤2：用 stoken 换 ltoken（可选，genAuthKey 可能需要）
-            var ltoken: String? = null
-            when (val ltokenResult = mihoyoApi.getLTokenByStoken(stoken, aid, mid)) {
-                is ApiResult.Success -> {
-                    ltoken = ltokenResult.data
-                    setState {
-                        copy(
-                            debugInfo = (uiState.value.debugInfo ?: "") + "\nltoken 获取成功: ${ltoken.take(16)}..."
-                        )
-                    }
-                }
-                is ApiResult.Error -> {
-                    setState {
-                        copy(
-                            debugInfo = (uiState.value.debugInfo ?: "") + "\nltoken 获取失败: ${ltokenResult.message}"
-                        )
-                    }
-                }
-            }
-
-            // 保存完整凭证
+            // 先保存已拿到的凭据（不依赖 stoken，ltoken/cookie_token 亦可鉴权）
             authRepository.saveLoginCredentials(
                 stoken = stoken,
                 ltuid = aid,
@@ -263,10 +263,72 @@ class AuthViewModel @Inject constructor(
                 ltoken = ltoken
             )
 
+            var finalCookieToken = cookieToken
+            var finalLtoken = ltoken
+
+            // 若已有 stoken，用它补齐缺失的 cookie_token / ltoken
+            // （stoken 可用时这是最可靠的换取通道）
+            if (!stoken.isNullOrBlank()) {
+                if (finalCookieToken.isNullOrBlank()) {
+                    when (val cookieResult = mihoyoApi.getCookieTokenByStoken(stoken, aid, mid)) {
+                        is ApiResult.Success -> {
+                            finalCookieToken = cookieResult.data
+                            setState {
+                                copy(
+                                    debugInfo = "cookie_token 获取成功: ${finalCookieToken.take(16)}..."
+                                )
+                            }
+                        }
+                        is ApiResult.Error -> setState {
+                            copy(
+                                debugInfo = "cookie_token 获取失败: ${cookieResult.message}"
+                            )
+                        }
+                    }
+                }
+
+                if (finalLtoken.isNullOrBlank()) {
+                    when (val ltokenResult = mihoyoApi.getLTokenByStoken(stoken, aid, mid)) {
+                        is ApiResult.Success -> {
+                            finalLtoken = ltokenResult.data
+                            setState {
+                                copy(
+                                    debugInfo = (uiState.value.debugInfo ?: "") +
+                                        "\nltoken 获取成功: ${finalLtoken.take(16)}..."
+                                )
+                            }
+                        }
+                        is ApiResult.Error -> setState {
+                            copy(
+                                debugInfo = (uiState.value.debugInfo ?: "") +
+                                    "\nltoken 获取失败: ${ltokenResult.message}"
+                            )
+                        }
+                    }
+                }
+
+                authRepository.saveLoginCredentials(
+                    stoken = stoken,
+                    ltuid = aid,
+                    mid = mid,
+                    cookieToken = finalCookieToken,
+                    ltoken = finalLtoken
+                )
+            } else {
+                // 无 stoken（新版扫码）：Set-Cookie 里的 ltoken_v2 /
+                // cookie_token_v2 已是可用凭证，直接进入角色获取
+                setState {
+                    copy(
+                        debugInfo = (uiState.value.debugInfo ?: "") +
+                            "\n无 stoken（新版扫码登录），使用 Set-Cookie 凭据继续"
+                    )
+                }
+            }
+
             setState {
                 copy(
                     statusText = "正在获取游戏角色...",
-                    debugInfo = "凭证获取完成\nstoken: ${stoken.take(10)}...\ncookie_token: ${cookieToken?.take(10) ?: "无"}\nltoken: ${ltoken?.take(10) ?: "无"}\n正在获取角色列表..."
+                    debugInfo = (uiState.value.debugInfo ?: "") + "\n正在获取角色列表..."
                 )
             }
 
@@ -291,6 +353,11 @@ class AuthViewModel @Inject constructor(
         viewModelScope.launch {
             when (val result = mihoyoApi.getGameRoles()) {
                 is ApiResult.Success -> {
+                    com.genshin.gachahelper.auth.AppLog.i(
+                        "Auth", "fetchGameRoles",
+                        "成功 角色数=${result.data.size} " +
+                            "uids=${result.data.joinToString { it.uid }}"
+                    )
                     val roles = result.data
                     when {
                         roles.isEmpty() -> setState {
@@ -311,13 +378,20 @@ class AuthViewModel @Inject constructor(
                         }
                     }
                 }
-                is ApiResult.Error -> setState {
-                    copy(
-                        phase = AuthPhase.QR_DISPLAY,
-                        qrBitmap = null,
-                        error = "获取角色失败: ${result.message}",
-                        debugInfo = result.rawResponse.takeIf { it.isNotBlank() }
+                is ApiResult.Error -> {
+                    com.genshin.gachahelper.auth.AppLog.e(
+                        "Auth", "fetchGameRoles",
+                        "失败 code=${result.code} step=${result.step} " +
+                            "msg=${result.message} raw=${result.rawResponse.take(220)}"
                     )
+                    setState {
+                        copy(
+                            phase = AuthPhase.QR_DISPLAY,
+                            qrBitmap = null,
+                            error = "获取角色失败: ${result.message}",
+                            debugInfo = result.rawResponse.takeIf { it.isNotBlank() }
+                        )
+                    }
                 }
             }
         }

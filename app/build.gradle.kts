@@ -51,8 +51,8 @@ android {
         applicationId = "com.genshin.gachahelper"
         minSdk = 26
         targetSdk = 36
-        versionCode = 55
-        versionName = "1.8.3"
+        versionCode = 65
+        versionName = "1.9.4"
 
         // 无 androidTest 源码集，不再声明悬空的 instrumentation runner
         vectorDrawables {
@@ -94,6 +94,11 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+    testOptions {
+        // AppLog 会调用 android.util.Log，JVM 单测中未 mock 会抛 RuntimeException；
+        // 让未 mock 的 Android 方法返回默认值，保证 DsSignerTest 等纯逻辑测试可运行
+        unitTests.isReturnDefaultValues = true
     }
 }
 

@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -239,7 +242,15 @@ private fun StatsScrollContent(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 52.dp, bottom = dockContentBottomPadding())
+            // 2026-09-20：页面顶栏已移除。原 top=52.dp 是给顶栏让位，
+            // 现改为「状态栏高度 + 8dp」，避免首个区块被状态栏压住。
+            contentPadding = PaddingValues(
+                top = with(androidx.compose.ui.platform.LocalDensity.current) {
+                    androidx.compose.foundation.layout.WindowInsets.statusBars
+                        .getTop(this).toDp()
+                } + 8.dp,
+                bottom = dockContentBottomPadding()
+            )
         ) {
             items(
                 count = blocks.size,
@@ -262,11 +273,14 @@ private fun StatsScrollContent(
 
         // 吸顶导航栏（始终可见的浮层）。滚动高亮逻辑在 StatsSectionNavBar 内部，
         // 跨区块时只有浮层自身重组，不会带动整页 LazyColumn 树。
+        // 2026-09-20：顶栏移除后需自行避让系统状态栏，否则吸顶条会被状态栏压住。
         StatsSectionNavBar(
             listState = listState,
             sectionNames = sectionNames,
             sectionStartIndices = sectionStartIndices,
-            modifier = Modifier.align(Alignment.TopCenter)
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
         )
     }
 }

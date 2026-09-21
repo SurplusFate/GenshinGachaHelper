@@ -44,7 +44,8 @@ fun GachaAppNavHost() {
     val currentDestination = navBackStackEntry?.destination
 
     val showBottomBar = currentDestination?.route in bottomNavItems.map { it.route }
-    val currentScreen = bottomNavItems.firstOrNull { it.route == currentDestination?.route }
+    // 注：原先的 currentScreen（按当前 tab 取 Screen 对象）仅用于顶部标题栏，
+    // 该标题栏已按用户反馈移除，故此处不再需要。
 
     // 液态玻璃背板分层（Kyant0/AndroidLiquidGlass）：
     //  - canvasBackdrop ：背景画布层，只含底图。卡片/顶栏位于内容层内部，
@@ -79,9 +80,11 @@ fun GachaAppNavHost() {
                     // 外壳透明：背景画布在下面独立成层，顶栏、卡片、DOCK 都从它上面取玻璃
                     containerColor = Color.Transparent,
                     topBar = {
-                        if (currentScreen != null) {
-                            GlassTopBar(title = { Text(currentScreen.title) })
-                        } else if (currentDestination?.route == Screen.Auth.route) {
+                        // 2026-09-20：4 个主 tab（首页/历史/统计/设置）的顶部标题栏已移除
+                        // （用户反馈"APP 自带的这个状态栏没什么用"）——tab 身份由底部
+                        // 悬浮 DOCK 高亮表达，页面顶部标题重复且占用垂直空间。
+                        // 仅保留 Auth / Report 这类带返回键的二级页顶栏。
+                        if (currentDestination?.route == Screen.Auth.route) {
                             GlassTopBar(
                                 title = { Text("授权登录") },
                                 navigationIcon = {

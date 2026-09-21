@@ -4,12 +4,14 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.genshin.gachahelper.auth.AppLog
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.signin.SignInRepository
 import com.genshin.gachahelper.sync.GachaDataImporter
+import com.genshin.gachahelper.ui.logexport.LogExportDialogState
 import com.genshin.gachahelper.ui.theme.ThemeMode
 import com.genshin.gachahelper.ui.theme.ThemeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -38,6 +40,8 @@ class SettingsViewModel @Inject constructor(
     private val sessionEventBus: SessionEventBus,
     private val themeRepository: ThemeRepository,
     private val signInRepository: SignInRepository,
+    // 2026-09-20：日志导出功能从首页迁至「设置 → 关于」区块（测试期诊断入口收编）
+    private val appLog: AppLog,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -55,16 +59,88 @@ class SettingsViewModel @Inject constructor(
             initialValue = ThemeMode.FOLLOW_SYSTEM
         )
 
-    /** 每日自动签到开关 */
-    val dailySignEnabled: StateFlow<Boolean> = signInRepository.enabledFlow
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = false
-        )
+    // 2026-09-20：每日自动签到的 UI 入口（dailySignEnabled/dailySignResult/
+    // setDailySignEnabled/manualDailySignIn）已整体迁至便笺页 HomeViewModel，
+    // 此处不再暴露。signInRepository 注入保留——logout 时仍需 onLogout()
+    // 关闭自动签到任务。
 
-    /** 最近一次签到结果提示 */
-    val dailySignResult: StateFlow<String?> = signInRepository.lastResult.asStateFlow()
+    // ------------------------------------------------------------------
+    // 日志导出（2026-09-20 从 HomeViewModel 迁入，入口在「关于」区块）
+    // ------------------------------------------------------------------
+
+    /** 日志导出弹窗状态：非 null 时底部弹出，提供分享文件/复制全文/复制路径 */
+    private val _logExportDialog = MutableStateFlow<LogExportDialogState?>(null)
+    val logExportDialog: StateFlow<LogExportDialogState?> = _logExportDialog.asStateFlow()
+
+    /**
+     * 打开日志导出弹窗。
+     * 同步预生成一份 export 文件到 cacheDir（避免分享时卡顿），把元信息放进状态。
+     */
+    fun openLogExportDialog() {
+        val logDirPath = appLog.logDirPath()
+        val activeFile = appLog.activeLogFilePath()
+        val exportFile = runCatching { appLog.exportToCache() }.getOrNull()
+        AppLog.i(
+            "Settings", "openLogExportDialog",
+            "dir=$logDirPath active=$activeFile export=${exportFile?.absolutePath} " +
+                "size=${exportFile?.length() ?: 0}"
+        )
+        _logExportDialog.value = LogExportDialogState(
+            logDirPath = logDirPath,
+            activeFilePath = activeFile,
+            exportFilePath = exportFile?.absolutePath,
+            exportFileSize = exportFile?.length() ?: 0L
+        )
+    }
+
+    fun dismissLogExportDialog() {
+        _logExportDialog.value = null
+    }
+
+    /**
+     * 把日志原文复制到系统剪贴板，让用户直接粘贴到 IM。
+     */
+    fun copyLogToClipboard() {
+        val text = runCatching { appLog.copyToClipboard() }.getOrElse { e ->
+            AppLog.e("Settings", "copyLogToClipboard", "复制失败: ${e.message}", e)
+            ""
+        }
+        val dialog = _logExportDialog.value
+        _logExportDialog.value = dialog?.copy(
+            lastAction = if (text.isNotEmpty())
+                "已复制 ${text.length} 字符到剪贴板，可粘贴到聊天窗口"
+            else
+                "复制失败"
+        )
+    }
+
+    /**
+     * 把日志目录 + 当前文件路径复制到剪贴板，用户粘给开发者远程诊断。
+     *
+     * 2026-09-20 迁移修复：旧实现（HomeViewModel）误调 appLog.copyToClipboard(label)，
+     * 实际复制的是日志全文而非路径信息——这里直接写 ClipboardManager 复制路径文本。
+     */
+    fun revealLogPathInClipboard() {
+        val dialog = _logExportDialog.value ?: return
+        val text = """
+            |GenshinGachaHelper 日志文件
+            |日志目录: ${dialog.logDirPath}
+            |今日文件: ${dialog.activeFilePath}
+            |导出文件: ${dialog.exportFilePath ?: "(未生成)"}
+            |导出大小: ${dialog.exportFileSize} 字节
+        """.trimMargin()
+        runCatching {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            clipboard.setPrimaryClip(
+                android.content.ClipData.newPlainText("gacha_helper_paths", text)
+            )
+        }
+        AppLog.i("Settings", "revealLogPath", "dir=${dialog.logDirPath}")
+        _logExportDialog.value = dialog.copy(
+            lastAction = "日志路径已复制到剪贴板，可粘贴发给开发者"
+        )
+    }
 
     init {
         // 监听全局会话事件：登录/退出/导入/清除后需重新 loadSettings
@@ -113,22 +189,6 @@ class SettingsViewModel @Inject constructor(
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             themeRepository.setThemeMode(mode)
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 每日自动签到
-    // ------------------------------------------------------------------
-
-    /** 开关每日自动签到 */
-    fun setDailySignEnabled(enabled: Boolean) {
-        signInRepository.setEnabled(enabled)
-    }
-
-    /** 手动立即签到一次（不影响已排队的自动任务） */
-    fun manualDailySignIn() {
-        viewModelScope.launch {
-            signInRepository.performManualSignIn()
         }
     }
 

@@ -10,7 +10,7 @@ import org.junit.Test
  *
  * 覆盖：
  * - DS1 格式与摘要自洽性（t,r,md5(salt&t&r)）
- * - DS2 格式与摘要自洽性（含 b / q 拼接规则）
+ * - DS2 格式与摘要自洽性（&b / &q 无条件拼接，空值保留）
  * - r 的取值范围与随机性
  * - salt 常量长度
  * - randomDeviceId 的 UUID v4 格式
@@ -66,10 +66,11 @@ class DsSignerTest {
     // ==================== DS2 ====================
 
     @Test
-    fun `DS2 无 body 无 query 时摘要自洽`() {
+    fun `DS2 无 body 无 query 时仍保留 b q 段`() {
         val salt = DsSigner.Salt.X4
         val (t, r, digest) = split(DsSigner.generateDS2(salt))
-        assertEquals(md5("salt=$salt&t=$t&r=$r"), digest)
+        // 依据 2026-09 修复：&b / &q 无条件拼接，空值也保留
+        assertEquals(md5("salt=$salt&t=$t&r=$r&b=&q="), digest)
     }
 
     @Test
@@ -77,7 +78,8 @@ class DsSignerTest {
         val salt = DsSigner.Salt.X4
         val query = "uid=100000000&region=cn_gf01"
         val (t, r, digest) = split(DsSigner.generateDS2(salt, query = query))
-        assertEquals(md5("salt=$salt&t=$t&r=$r&q=$query"), digest)
+        // 无 body 时 &b= 仍需保留（留空值）
+        assertEquals(md5("salt=$salt&t=$t&r=$r&b=&q=$query"), digest)
     }
 
     @Test
@@ -90,15 +92,15 @@ class DsSignerTest {
     }
 
     @Test
-    fun `DS2 空白 body 与 query 不参与拼接`() {
+    fun `DS2 空白 body 与 query 仍保留 b q 段`() {
         val salt = DsSigner.Salt.X4
         val blankBody = DsSigner.generateDS2(salt, body = "", query = "")
         val blankNowhere = DsSigner.generateDS2(salt, body = "   ", query = "  ")
-        // 均为空则不追加 b / q 段
+        // 依据 2026-09 修复：&b / &q 无条件拼接，空值与空白均按原样保留
         val (t1, r1, d1) = split(blankBody)
-        assertEquals(md5("salt=$salt&t=$t1&r=$r1"), d1)
+        assertEquals(md5("salt=$salt&t=$t1&r=$r1&b=&q="), d1)
         val (t2, r2, d2) = split(blankNowhere)
-        assertEquals(md5("salt=$salt&t=$t2&r=$r2"), d2)
+        assertEquals(md5("salt=$salt&t=$t2&r=$r2&b=   &q=  "), d2)
     }
 
     @Test

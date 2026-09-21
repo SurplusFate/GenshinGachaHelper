@@ -1,5 +1,6 @@
 package com.genshin.gachahelper.auth
 
+import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -43,14 +44,22 @@ data class QrCodeStatus(
 /**
  * 米游社通行证扫码登录结果（新 API）
  * status: Created / Scanned / Confirmed
- * tokens 和 user_info 仅在 Confirmed 时存在
+ *
+ * 凭据来源：确认登录后服务端通过**响应头 Set-Cookie** 下发
+ * （ltoken_v2 / cookie_token_v2 / ltuid_v2 / mid 等），响应体的
+ * data.tokens 数组通常为空。body 解析仅作兼容回退。
  */
 data class PassportQrStatus(
     val status: String,
     val stoken: String?,
     val mid: String?,
     val aid: String?,
-    val rawResponse: String
+    val ltoken: String? = null,
+    val cookieToken: String? = null,
+    val rawResponse: String,
+    val setCookieHeader: String = "",
+    /** data.tokens 数组的原始内容（诊断用：确认服务端是否下发凭据） */
+    val tokensRaw: String = ""
 )
 
 /**
@@ -73,6 +82,7 @@ data class PassportQrStatus(
 class MihoyoApiService @Inject constructor(
     private val authRepository: AuthRepository,
     private val deviceFpService: DeviceFpService,
+    private val cookieExtractor: CookieExtractor,
     private val client: OkHttpClient
 ) {
     companion object {
@@ -149,6 +159,12 @@ class MihoyoApiService @Inject constructor(
 
             val response = client.newCall(request).execute()
             val respBody = response.body?.string() ?: ""
+            AppLog.i(
+                "Passport", "createQR",
+                "POST url=$API_PASSPORT_CREATE_QR resp http=${response.code} " +
+                    "trace=${response.header("x-trace-id") ?: "-"} " +
+                    "body_len=${respBody.length} body_prefix=${respBody.take(200)}"
+            )
 
             if (!response.isSuccessful) {
                 return@withContext ApiResult.Error("HTTP ${response.code}", response.code, respBody, "passportCreate")
@@ -161,7 +177,7 @@ class MihoyoApiService @Inject constructor(
                 return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "passportCreate")
             }
 
-            val data = json.getAsJsonObject("data")
+            val data = json.getAsJsonObjectSafe("data")
                 ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "passportCreate")
 
             val url = data.get("url")?.asString
@@ -198,6 +214,14 @@ class MihoyoApiService @Inject constructor(
 
                 val response = client.newCall(request).execute()
                 val respBody = response.body?.string() ?: ""
+                val setCookies = response.headers("Set-Cookie")
+                AppLog.i(
+                    "Passport", "queryQR",
+                    "POST url=$API_PASSPORT_QUERY_QR ticket=${ticket.take(20)}... " +
+                        "resp http=${response.code} body_len=${respBody.length} " +
+                        "set_cookie_count=${setCookies.size} " +
+                        "body_prefix=${respBody.take(220)}"
+                )
 
                 if (!response.isSuccessful) {
                     return@withContext ApiResult.Error("HTTP ${response.code}", response.code, respBody, "passportQuery")
@@ -211,7 +235,7 @@ class MihoyoApiService @Inject constructor(
                     return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "passportQuery")
                 }
 
-                val data = json.getAsJsonObject("data")
+                val data = json.getAsJsonObjectSafe("data")
                     ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "passportQuery")
 
                 val status = data.get("status")?.asString ?: "Created"
@@ -219,28 +243,92 @@ class MihoyoApiService @Inject constructor(
                 var stoken: String? = null
                 var mid: String? = null
                 var aid: String? = null
+                var ltoken: String? = null
+                var cookieToken: String? = null
 
                 if (status == "Confirmed") {
-                    val userInfo = data.getAsJsonObject("user_info")
-                    mid = userInfo?.get("mid")?.asString
-                    aid = userInfo?.get("aid")?.asString
+                    val userInfo = data.getAsJsonObjectSafe("user_info")
+                    mid = userInfo?.get("mid")?.asStringSafe()
+                    aid = userInfo?.get("aid")?.asStringSafe()
+                        ?: userInfo?.get("uid")?.asStringSafe()
+                        ?: userInfo?.get("account_id")?.asStringSafe()
 
-                    // tokens 数组字段是 name（不是 token_type）
-                    // 国服通常返回 name="stoken_v2" 或 name="stoken"
-                    val tokensArray = data.getAsJsonArray("tokens")
-                    if (tokensArray != null) {
+                    // ── 凭据提取（2026-09 二次修正）─────────────────────
+                    // 凭据可能来自两处，两处都要试，不能互相短路：
+                    //  A) 响应头 Set-Cookie（web 流程下发
+                    //     ltoken_v2 / cookie_token_v2 / ltuid_v2 / mid）
+                    //  B) 响应体 data.tokens 数组（app 流程，元素形如
+                    //     {"token":"...","token_type":N}，部分版本带 "name"）
+                    //
+                    // 参考实现 gsuid_core/cookie_manager/qrlogin.py：
+                    // 从 data.tokens 按 name 取 stoken，取不到则**兜底取
+                    // 第一个元素**（tokens[0]["token"]）；TeyvatGuide 的类型
+                    // 定义里该元素只有 token + token_type（无 name）。
+                    // 因此按 name → token_type → 首个 三级策略依次尝试。
+                    // ──────────────────────────────────────────────
+                    val setCookies = response.headers("Set-Cookie")
+                    if (setCookies.isNotEmpty()) {
+                        val extracted = cookieExtractor.extract(setCookies.joinToString("; "))
+                        stoken = extracted.stoken
+                        ltoken = extracted.ltoken
+                        cookieToken = extracted.cookieToken
+                        if (extracted.ltuid?.isNotBlank() == true) aid = extracted.ltuid
+                        if (extracted.mid?.isNotBlank() == true) mid = extracted.mid
+                    }
+
+                    // body 的 tokens 数组：无条件解析（用于补齐 + 诊断）
+                    val tokensArray = data.getAsJsonArraySafe("tokens")
+                    if (tokensArray != null && tokensArray.size() > 0) {
+                        var stokenNamed: String? = null
+                        var ltokenV: String? = null
+                        var cookieTokenV: String? = null
+                        var firstToken: String? = null
                         for (tokenObj in tokensArray) {
+                            if (!tokenObj.isJsonObject) continue
                             val obj = tokenObj.asJsonObject
-                            val name = obj.get("name")?.asString ?: ""
-                            val token = obj.get("token")?.asString
-                            if (token != null && stoken == null) {
-                                stoken = token
+                            val token = obj.get("token")?.asString ?: continue
+                            if (firstToken.isNullOrBlank()) firstToken = token
+                            val name = obj.get("name")?.asString.orEmpty()
+                            when (name) {
+                                "stoken_v2", "stoken" -> stokenNamed = token
+                                "ltoken_v2", "ltoken" -> ltokenV = token
+                                "cookie_token_v2", "cookie_token" -> cookieTokenV = token
                             }
                         }
+                        // name 匹配不到时兜底取首个（与 gsuid_core 一致）
+                        if (stoken.isNullOrBlank()) {
+                            stoken = stokenNamed ?: firstToken
+                        }
+                        if (ltoken.isNullOrBlank()) ltoken = ltokenV
+                        if (cookieToken.isNullOrBlank()) cookieToken = cookieTokenV
                     }
                 }
 
-                ApiResult.Success(PassportQrStatus(status, stoken, mid, aid, respBody))
+                ApiResult.Success(
+                    PassportQrStatus(
+                        status = status,
+                        stoken = stoken,
+                        mid = mid,
+                        aid = aid,
+                        ltoken = ltoken,
+                        cookieToken = cookieToken,
+                        rawResponse = respBody,
+                        setCookieHeader = response.headers("Set-Cookie").joinToString("\n"),
+                        tokensRaw = data.get("tokens")?.toString().orEmpty()
+                    ).also {
+                        // 凭据提取诊断：把关键字段的存在性落到日志
+                        // 用户最新反馈："扫码确认成功 stoken=null"——这里把空/有都标清楚
+                        AppLog.i(
+                            "Passport", "queryQR",
+                            "Confirmed 凭据提取 stoken=${it.stoken.isNullOrBlank().let { b -> if (b) "<empty>" else "<present>" }} " +
+                                "ltoken=${it.ltoken.isNullOrBlank().let { b -> if (b) "<empty>" else "<present>" }} " +
+                                "cookieToken=${it.cookieToken.isNullOrBlank().let { b -> if (b) "<empty>" else "<present>" }} " +
+                                "mid=${it.mid ?: "<empty>"} aid=${it.aid ?: "<empty>"} " +
+                                "tokens_count=${if (it.tokensRaw.isBlank()) 0 else it.tokensRaw.length} " +
+                                "set_cookie_lines=${it.setCookieHeader.lines().size}"
+                        )
+                    }
+                )
             } catch (e: Exception) {
                 ApiResult.Error("查询通行证扫码状态异常: ${e.message}", -1, "", "passportQuery")
             }
@@ -277,6 +365,13 @@ class MihoyoApiService @Inject constructor(
             val response = client.newCall(request).execute()
             val respBody = response.body?.string() ?: ""
 
+            AppLog.i(
+                "Token", "getCookieTokenByStoken",
+                "GET url=${url.take(180)}... resp http=${response.code} " +
+                    "trace=${response.header("x-trace-id") ?: "-"} " +
+                    "body_len=${respBody.length} body_prefix=${respBody.take(200)}"
+            )
+
             if (!response.isSuccessful) {
                 return@withContext ApiResult.Error("HTTP ${response.code}", response.code, respBody, "getCookieToken")
             }
@@ -288,7 +383,7 @@ class MihoyoApiService @Inject constructor(
                 return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "getCookieToken")
             }
 
-            val data = json.getAsJsonObject("data")
+            val data = json.getAsJsonObjectSafe("data")
                 ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "getCookieToken")
 
             val cookieToken = data.get("cookie_token")?.asString
@@ -296,13 +391,16 @@ class MihoyoApiService @Inject constructor(
 
             ApiResult.Success(cookieToken)
         } catch (e: Exception) {
+            AppLog.e("Token", "getCookieTokenByStoken", "异常 ${e.javaClass.simpleName}: ${e.message}", e)
             ApiResult.Error("换取 cookie_token 异常: ${e.message}", -1, "", "getCookieToken")
         }
     }
 
     // ------------------------------------------------------------------
-    // P3b. 用 stoken 换 ltoken（passport API，POST，无需 DS）
+    // P3b. 用 stoken 换 ltoken（passport API，GET，无需 DS）
     // 参考 TeyvatGuide getLTokenBySToken
+    // 2026-09-20 修复：POST 会返回 405 Method Not Allowed（真机日志实证），
+    // 该接口实际是 GET（与 getCookieAccountInfoBySToken 同族）。
     // ------------------------------------------------------------------
     suspend fun getLTokenByStoken(
         stoken: String,
@@ -322,13 +420,19 @@ class MihoyoApiService @Inject constructor(
                 .addHeader("x-rpc-app_id", PASSPORT_APP_ID)
                 .addHeader("x-rpc-client_type", PASSPORT_CLIENT_TYPE)
                 .addHeader("x-rpc-device_id", authRepository.getOrCreateDeviceId())
-                .addHeader("Content-Type", "application/json")
                 .addHeader("Accept", "application/json")
-                .post("{}".toRequestBody("application/json".toMediaType()))
+                .get()
                 .build()
 
             val response = client.newCall(request).execute()
             val respBody = response.body?.string() ?: ""
+
+            AppLog.i(
+                "Token", "getLTokenByStoken",
+                "GET url=$API_GET_LTOKEN_BY_STOKEN resp http=${response.code} " +
+                    "trace=${response.header("x-trace-id") ?: "-"} " +
+                    "body_len=${respBody.length} body_prefix=${respBody.take(200)}"
+            )
 
             if (!response.isSuccessful) {
                 return@withContext ApiResult.Error("HTTP ${response.code}", response.code, respBody, "getLToken")
@@ -341,11 +445,12 @@ class MihoyoApiService @Inject constructor(
                 return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "getLToken")
             }
 
-            val ltoken = json.getAsJsonObject("data")?.get("ltoken")?.asString
+            val ltoken = json.getAsJsonObjectSafe("data")?.get("ltoken")?.asStringSafe()
                 ?: return@withContext ApiResult.Error("响应缺少 ltoken", -1, respBody, "getLToken")
 
             ApiResult.Success(ltoken)
         } catch (e: Exception) {
+            AppLog.e("Token", "getLTokenByStoken", "异常 ${e.javaClass.simpleName}: ${e.message}", e)
             ApiResult.Error("换取 ltoken 异常: ${e.message}", -1, "", "getLToken")
         }
     }
@@ -382,10 +487,10 @@ class MihoyoApiService @Inject constructor(
                 return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "fetch")
             }
 
-            val data = json.getAsJsonObject("data")
+            val data = json.getAsJsonObjectSafe("data")
                 ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "fetch")
 
-            val url = data.get("url")?.asString
+            val url = data.get("url")?.asStringSafe()
                 ?: return@withContext ApiResult.Error("响应缺少 data.url", -1, respBody, "fetch")
 
             val ticket = Regex("ticket=([^&]+)").find(url)?.groupValues?.get(1)
@@ -434,7 +539,7 @@ class MihoyoApiService @Inject constructor(
                     return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "query")
                 }
 
-                val data = json.getAsJsonObject("data")
+                val data = json.getAsJsonObjectSafe("data")
                     ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "query")
 
                 val stat = data.get("stat")?.asString ?: "Init"
@@ -442,14 +547,14 @@ class MihoyoApiService @Inject constructor(
                 var gameToken: String? = null
 
                 if (stat == "Confirmed") {
-                    val payload = data.getAsJsonObject("payload")
+                    val payload = data.getAsJsonObjectSafe("payload")
                     if (payload != null) {
-                        val raw = payload.get("raw")?.asString
+                        val raw = payload.get("raw")?.asStringSafe()
                         if (!raw.isNullOrBlank()) {
                             try {
-                                val rawJson = JsonParser.parseString(raw).asJsonObject
-                                uid = rawJson.get("uid")?.asString
-                                gameToken = rawJson.get("token")?.asString
+                                val rawJson = JsonParser.parseString(raw).asJsonObjectOrNullSafe()
+                                uid = rawJson?.get("uid")?.asStringSafe()
+                                gameToken = rawJson?.get("token")?.asStringSafe()
                             } catch (_: Exception) { }
                         }
                     }
@@ -515,14 +620,14 @@ class MihoyoApiService @Inject constructor(
                 return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "getToken")
             }
 
-            val data = json.getAsJsonObject("data")
+            val data = json.getAsJsonObjectSafe("data")
                 ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "getToken")
 
-            val tokenObj = data.getAsJsonObject("token")
-            val stoken = tokenObj?.get("token")?.asString
+            val tokenObj = data.getAsJsonObjectSafe("token")
+            val stoken = tokenObj?.get("token")?.asStringSafe()
                 ?: return@withContext ApiResult.Error("响应缺少 token", -1, respBody, "getToken")
 
-            val mid = data.getAsJsonObject("user_info")?.get("mid")?.asString ?: ""
+            val mid = data.getAsJsonObjectSafe("user_info")?.get("mid")?.asStringSafe() ?: ""
 
             ApiResult.Success(TokenInfo(stoken, mid))
         } catch (e: Exception) {
@@ -580,16 +685,17 @@ class MihoyoApiService @Inject constructor(
                 return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "getRoles")
             }
 
-            val listArray = json.getAsJsonObject("data")?.getAsJsonArray("list")
+            val listArray = json.getAsJsonObjectSafe("data")?.getAsJsonArraySafe("list")
                 ?: return@withContext ApiResult.Error("响应缺少 data.list", -1, respBody, "getRoles")
 
             val roles = mutableListOf<GameRole>()
             for (item in listArray) {
+                if (!item.isJsonObject) continue
                 val obj = item.asJsonObject
-                val uid = obj.get("game_uid")?.asString ?: continue
-                val region = obj.get("region")?.asString ?: "cn_gf01"
-                val nickname = obj.get("nickname")?.asString ?: ""
-                val level = obj.get("level")?.asInt ?: 0
+                val uid = obj.get("game_uid")?.asStringSafe() ?: continue
+                val region = obj.get("region")?.asStringSafe() ?: "cn_gf01"
+                val nickname = obj.get("nickname")?.asStringSafe() ?: ""
+                val level = obj.get("level")?.asIntSafe() ?: 0
                 roles.add(GameRole(uid, region, nickname, level))
             }
 
@@ -656,7 +762,7 @@ class MihoyoApiService @Inject constructor(
                 return@withContext ApiResult.Error("$msg (code: $retcode)", retcode, respBody, "genAuthKey")
             }
 
-            val authKey = json.getAsJsonObject("data")?.get("authkey")?.asString
+            val authKey = json.getAsJsonObjectSafe("data")?.get("authkey")?.asStringSafe()
                 ?: return@withContext ApiResult.Error("响应缺少 data.authkey", -1, respBody, "genAuthKey")
 
             authRepository.cacheAuthKey(authKey)
@@ -678,4 +784,235 @@ class MihoyoApiService @Inject constructor(
         val server = authRepository.getServer() ?: "cn_gf01"
         return generateAuthKey(uid, server)
     }
+}
+
+// ==================== 每日便笺（实时状态：树脂 / 洞天宝钱） ====================
+
+/**
+ * 每日便笺（实时状态）数据
+ *
+ * 字段说明：
+ * - 树脂：currentResin / maxResin，resinRecoverySeconds 为距离下一点树脂的剩余秒数（满时无意义）
+ * - 洞天宝钱：currentHomeCoin / maxHomeCoin，homeCoinRecoverySeconds 为距离下一点宝钱的剩余秒数
+ * - 每日委托：finishedTaskNum / totalTaskNum
+ * - 周本减半：remainResinDiscount / resinDiscountLimit
+ */
+data class DailyNoteData(
+    val currentResin: Int,
+    val maxResin: Int,
+    val resinRecoverySeconds: Long,
+    val currentHomeCoin: Int,
+    val maxHomeCoin: Int,
+    val homeCoinRecoverySeconds: Long,
+    val finishedTaskNum: Int,
+    val totalTaskNum: Int,
+    val remainResinDiscount: Int,
+    val resinDiscountLimit: Int,
+    /** 本次数据拉取时刻（用于倒计时本地推算，避免每秒请求服务器） */
+    val fetchedAt: Long = System.currentTimeMillis()
+) {
+    val resinFull: Boolean get() = currentResin >= maxResin
+    val homeCoinFull: Boolean get() = currentHomeCoin >= maxHomeCoin
+}
+
+/**
+ * 每日便笺（原神实时状态）服务
+ *
+ * 接口：api-takumi-record.mihoyo.com/game_record/app/genshin/api/dailyNote
+ * 鉴权：DS2 + 4X salt + Cookie（client_type=5），query 需参与签名
+ * 限制：米游社对该接口有频率限制，客户端侧需自行节流（见 HomeViewModel 的 60 秒缓存窗口）
+ *
+ * ── 2026-09 修复说明 ──────────────────────────────────────────
+ * 5003 = "缺少合法设备信息"（UIGF-org/mihoyo-api-collect#37）。
+ * 根因是 DeviceFpService 旧版拿不到 getFp 签发的合法指纹，转而缓存了
+ * 自造的 12 位随机串。本类新增自愈逻辑：遇 5003 先强制刷新设备指纹
+ * （丢弃脏缓存、重新申请），再重试一次，避免用户被脏缓存永久卡死。
+ *
+ * 1034 = 触发米游社反机器人风控（geetest 人机验证）。
+ * 5003 修复后指纹已合法，但新指纹无历史信誉，敏感接口首次访问容易
+ * 被要求完成一次滑块验证。本类不做自动重试，而是把 1034 透传给 UI
+ * 层（HomeViewModel）触发 [VerificationService] 的验证弹窗流程：
+ * createVerification → WebView 滑块 → verifyVerification → 携带一次性
+ * x-rpc-chellange 头重试本接口。
+ * ──────────────────────────────────────────────────────────────
+ */
+@Singleton
+class DailyNoteService @Inject constructor(
+    private val authRepository: AuthRepository,
+    private val deviceFpService: DeviceFpService,
+    private val verificationService: VerificationService,
+    private val client: OkHttpClient
+) {
+    companion object {
+        private const val API_DAILY_NOTE =
+            "https://api-takumi-record.mihoyo.com/game_record/app/genshin/api/dailyNote"
+        private const val REFERER =
+            "https://webstatic.mihoyo.com/app/community-game-records/index.html?v=6"
+    }
+
+    /**
+     * 拉取实时便笺。
+     * 遇 5003（设备验证未通过）时强制刷新设备指纹并重试一次：
+     * 历史版本可能把自造的非法指纹写进缓存且永不失效，这里兜底自愈。
+     */
+    suspend fun fetchDailyNote(): ApiResult<DailyNoteData> {
+        val first = fetchDailyNoteOnce()
+        if (first is ApiResult.Error && first.code == 5003) {
+            deviceFpService.refreshDeviceFp()
+            return fetchDailyNoteOnce()
+        }
+        return first
+    }
+
+    private suspend fun fetchDailyNoteOnce(): ApiResult<DailyNoteData> = withContext(Dispatchers.IO) {
+        try {
+            val baseCookie = authRepository.buildCookieString()
+            if (baseCookie.isBlank()) {
+                return@withContext ApiResult.Error("未登录，缺少有效凭证", -1, "", "dailyNote")
+            }
+
+            val roleId = authRepository.getUid()
+            if (roleId.isNullOrBlank()) {
+                return@withContext ApiResult.Error("未获取到角色 UID", -1, "", "dailyNote")
+            }
+            val server = authRepository.getServer().orEmpty().ifBlank { "cn_gf01" }
+
+            // query 参与签名，键按字典序拼接（role_id < server）
+            val query = "role_id=$roleId&server=$server"
+            val url = "$API_DAILY_NOTE?$query"
+
+            // 2026-09-20 v2：缝合形态（hybrid）——与 create/verify 统一（除
+            // challenge_game 为验证接口专有头外，业务请求头集与其余完全一致）。
+            // 真机天然 A/B 铁证：全量 Cookie + 设备头形态 → dailyNote 1034
+            // （设备验证层通过）；official-form 纯浏览器形态 → 5003（OkHttp TLS
+            // 冒充 Chrome UA 被识破）。一次性 challenge token 只在"同一客户端
+            // 身份"下有效，验证链路（create/verify/dailyNote）三处形态必须一致。
+            val cookie = authRepository.buildCookieWithDeviceFp(baseCookie)
+            val deviceId = authRepository.getOrCreateDeviceId()
+            val deviceFp = deviceFpService.getOrCreateDeviceFp()
+            val ds = DsSigner.generateDS2(salt = DsSigner.Salt.X4, query = query)
+
+            // 一次性 challenge token（风控验证通过后获得）：取出即清，只对本次请求生效
+            val challengeToken = verificationService.getAndClearChallengeToken(roleId)
+            AppLog.i(
+                "DailyNote", "fetch",
+                "GET url=$url roleId=$roleId ds=$ds " +
+                    "fp(last4)=${deviceFp?.takeLast(4)} " +
+                    "form=hybrid-v2 challenge_token_used=${!challengeToken.isNullOrBlank()}"
+            )
+
+            val requestBuilder = Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", VerificationService.USER_AGENT_VERIFY)
+                .addHeader("Accept", "application/json, text/plain, */*")
+                .addHeader("Referer", REFERER)
+                .addHeader("Origin", "https://webstatic.mihoyo.com")
+                .addHeader("X-Requested-With", "com.mihoyo.hyperion")
+                .addHeader("sec-fetch-dest", "empty")
+                .addHeader("sec-fetch-site", "same-site")
+                .addHeader("Cookie", cookie)
+                .addHeader("DS", ds)
+                .addHeader("x-rpc-app_version", VerificationService.APP_VERSION_VERIFY)
+                .addHeader("x-rpc-client_type", MihoyoApiService.CLIENT_TYPE_WEB)
+                .addHeader("x-rpc-device_name", VerificationService.DEVICE_NAME_VERIFY)
+                .addHeader("x-rpc-language", "zh-cn")
+                .addHeader("x-rpc-page", VerificationService.RPC_PAGE)
+                .addHeader("x-rpc-sys_version", VerificationService.SYS_VERSION_VERIFY)
+                .addHeader("x-rpc-tool_version", VerificationService.TOOL_VERSION)
+            if (!deviceFp.isNullOrBlank()) {
+                requestBuilder.addHeader("x-rpc-device_fp", deviceFp)
+            }
+            if (deviceId.isNotBlank()) {
+                requestBuilder.addHeader("x-rpc-device_id", deviceId)
+            }
+
+            // 1034 风控验证通过后的一次性放行令牌。
+            // 2026-09-20 修正头名：官方 bundle 实证为 x-rpc-challenge（正拼），
+            // 旧名 x-rpc-chellange（拼错版）沿自 2022 年 paimon-webext，已过时。
+            if (!challengeToken.isNullOrBlank()) {
+                requestBuilder.addHeader("x-rpc-challenge", challengeToken)
+            }
+
+            val request = requestBuilder.get().build()
+
+            val response = client.newCall(request).execute()
+
+            // 记录 trace-id：若随后触发 1034 风控，验证请求需通过
+            // x-rpc-challenge_trace 回传它来关联被拦截的请求链
+            val traceId = response.header("x-trace-id")
+            verificationService.saveTraceId(roleId, traceId)
+
+            val respBody = response.body?.string() ?: ""
+
+            AppLog.i(
+                "DailyNote", "fetch",
+                "resp http=${response.code} ct=${response.header("content-type") ?: "-"} " +
+                    "trace=${traceId ?: "-"} " +
+                    "body_len=${respBody.length} body_prefix=${respBody.take(220)}"
+            )
+
+            if (!response.isSuccessful) {
+                return@withContext ApiResult.Error(
+                    "HTTP ${response.code}", response.code, respBody, "dailyNote"
+                )
+            }
+
+            val json = JsonParser.parseString(respBody).asJsonObject
+            val retcode = json.get("retcode")?.asInt ?: -1
+            if (retcode != 0) {
+                val msg = json.get("message")?.asString ?: "未知错误"
+                val hint = when (retcode) {
+                    -100 -> "登录凭证已过期，请重新登录"
+                    10101 -> "访问过于频繁或账号角色信息异常，请稍后再试"
+                    10102 -> "该账号未公开游戏数据"
+                    -10002 -> "该 Cookie 未绑定原神角色"
+                    -110, -10001 -> "请求过于频繁，请稍后再试"
+                    5003 -> "设备验证未通过（风控拦截），已自动刷新设备指纹｜fpSource:${deviceFpService.lastFpSource} getFp:${deviceFpService.lastGetFpStatus}"
+                    1034 -> "触发米游社安全验证，请完成滑块验证后重试"
+                    -3503 -> "当前设备或网络环境存在风险，请稍后重试"
+                    -502 -> "请求参数有误，请检查角色信息"
+                    else -> msg
+                }
+                AppLog.w(
+                    "DailyNote", "fetch",
+                    "非 0 响应 retcode=$retcode msg=$msg hint=$hint trace=$traceId"
+                )
+                return@withContext ApiResult.Error(
+                    "$hint (code: $retcode)", retcode, respBody, "dailyNote"
+                )
+            }
+
+            val data = json.getAsJsonObjectSafe("data")
+                ?: return@withContext ApiResult.Error("响应缺少 data", -1, respBody, "dailyNote")
+
+            ApiResult.Success(
+                DailyNoteData(
+                    currentResin = data.intOf("current_resin"),
+                    maxResin = data.intOf("max_resin", 160),
+                    resinRecoverySeconds = data.longOf("resin_recovery_time"),
+                    currentHomeCoin = data.intOf("current_home_coin"),
+                    maxHomeCoin = data.intOf("max_home_coin", 2400),
+                    homeCoinRecoverySeconds = data.longOf("home_coin_recovery_time"),
+                    finishedTaskNum = data.intOf("finished_task_num"),
+                    totalTaskNum = data.intOf("total_task_num", 4),
+                    remainResinDiscount = data.intOf("remain_resin_discount_num"),
+                    resinDiscountLimit = data.intOf("resin_discount_num_limit", 3)
+                )
+            )
+        } catch (e: Exception) {
+            ApiResult.Error("获取每日便笺异常: ${e.message}", -1, "", "dailyNote")
+        }
+    }
+}
+
+/** 容错取 Int：兼容服务端把数字返回成字符串的情况 */
+private fun JsonObject.intOf(key: String, default: Int = 0): Int {
+    val element = get(key) ?: return default
+    return element.asString.trim().toIntOrNull() ?: default
+}
+
+/** 容错取 Long：重置倒计时为秒数字符串，空串/异常时返回 0 */
+private fun JsonObject.longOf(key: String): Long {
+    val element = get(key) ?: return 0L
+    return element.asString.trim().toLongOrNull() ?: 0L
 }
