@@ -130,9 +130,9 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            // 2026-09-20：页面顶栏已移除，内容需自行避让系统状态栏
-            // （edge-to-edge 模式下原先由 Scaffold topBar 承担该空间）
-            .statusBarsPadding()
+            // 2026-09-22：状态栏避让由 GachaAppNavHost 的 Scaffold innerPadding 统一承担，
+            // 此处再 statusBarsPadding() 属重复避让；只留 8dp 呼吸位。
+            .padding(top = 8.dp)
     ) {
         SearchBar(query = searchQuery, onQueryChange = viewModel::setSearchQuery)
 

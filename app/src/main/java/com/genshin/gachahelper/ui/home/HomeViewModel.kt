@@ -216,6 +216,19 @@ class HomeViewModel @Inject constructor(
 
         loadData()
 
+        // 洞天宝钱产量档位变化时，立即按新档位刷新便笺推算
+        // （接口不返回洞天仙力等级，档位由设置页选择，与提醒配置共用一份 DataStore）
+        viewModelScope.launch {
+            reminderStore.configFlow.collect { config ->
+                val note = _uiState.value.dailyNote ?: return@collect
+                if (note.homeCoinPerHour == config.homeCoinPerHour) return@collect
+                _uiState.value = _uiState.value.copy(
+                    dailyNote = note.copy(homeCoinPerHour = config.homeCoinPerHour)
+                )
+                reminderManager.reschedule()
+            }
+        }
+
         // 跨天巡检：进程常驻（长期不冷启动）跨过 0 点后，补一次当日同步。
         // 仅在"本地快照非今日"时才会真正发起网络请求，其余周期只读一次本地快照。
         viewModelScope.launch {
@@ -439,7 +452,7 @@ class HomeViewModel @Inject constructor(
      * 1. 读取本地快照（按 UID 隔离，换号不会串数据）；
      * 2. 快照属于"今天" → 直接灌入 UI，零网络请求。之后数值的增长与倒计时由
      *    [DailyNoteData.resinAt] / [DailyNoteData.homeCoinAt] 按固定恢复速率
-     *    本地外推（树脂 8 分钟/点、洞天宝钱 1 小时/个），每秒刷新一次即可；
+     *    本地外推（树脂 8 分钟/点连续恢复、洞天宝钱每小时批量 +30 个），每秒刷新一次即可；
      * 3. 快照缺失或已跨天 → 走一次网络同步并落盘，作为当天推算的新锚点；
      * 4. 网络失败 → 保留上次成功数据 / 展示错误与验证入口，不静默清空卡片。
      *
@@ -451,7 +464,9 @@ class HomeViewModel @Inject constructor(
         val uid = authRepository.getUid()?.takeIf { it.isNotBlank() } ?: return
 
         val now = System.currentTimeMillis()
-        val cached = dailyNoteRepository.load(uid)
+        // 洞天宝钱产量档位随设置走：旧快照落盘时没有该字段，这里统一覆盖
+        val homeCoinPerHour = reminderStore.current().homeCoinPerHour
+        val cached = dailyNoteRepository.load(uid)?.copy(homeCoinPerHour = homeCoinPerHour)
         val cachedIsToday = cached != null &&
             DailyNoteRepository.isSameLocalDay(cached.fetchedAt, now)
 
@@ -478,11 +493,12 @@ class HomeViewModel @Inject constructor(
         when (val result = dailyNoteService.fetchDailyNote()) {
             is ApiResult.Success -> {
                 // 落盘作为当天推算的锚点：本次启动之后的数值增长全部由本地外推
-                dailyNoteRepository.save(uid, result.data)
+                val fresh = result.data.copy(homeCoinPerHour = homeCoinPerHour)
+                dailyNoteRepository.save(uid, fresh)
                 // 新快照落地后按最新锚点重排阈值提醒
                 reminderManager.reschedule()
                 _uiState.value = _uiState.value.copy(
-                    dailyNote = result.data,
+                    dailyNote = fresh,
                     dailyNoteError = null,
                     dailyNoteErrorCode = null,
                     dailyNoteLoading = false

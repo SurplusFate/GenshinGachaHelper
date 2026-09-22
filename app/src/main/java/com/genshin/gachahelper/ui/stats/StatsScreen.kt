@@ -238,17 +238,21 @@ private fun StatsScrollContent(
     }
     val sectionNames = listOf("概览", "时间轴", "图鉴", "日历")
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 2026-09-22：吸顶导航栏由「浮层」改为参与布局的纵向排列。原浮层自带
+        // statusBarsPadding 且浮在列表之上，与列表顶部 padding 在 52~88dp 区间撞车，
+        // 导致统计页顶部内容与吸顶条重叠。改后吸顶条占位，列表在其下方滚动。
+        StatsSectionNavBar(
+            listState = listState,
+            sectionNames = sectionNames,
+            sectionStartIndices = sectionStartIndices
+        )
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            // 2026-09-20：页面顶栏已移除。原 top=52.dp 是给顶栏让位，
-            // 现改为「状态栏高度 + 8dp」，避免首个区块被状态栏压住。
+            // 2026-09-22：状态栏由 Scaffold 统一避让，这里只留 8dp 呼吸位。
             contentPadding = PaddingValues(
-                top = with(androidx.compose.ui.platform.LocalDensity.current) {
-                    androidx.compose.foundation.layout.WindowInsets.statusBars
-                        .getTop(this).toDp()
-                } + 8.dp,
+                top = 8.dp,
                 bottom = dockContentBottomPadding()
             )
         ) {
@@ -270,18 +274,6 @@ private fun StatsScrollContent(
                 }
             }
         }
-
-        // 吸顶导航栏（始终可见的浮层）。滚动高亮逻辑在 StatsSectionNavBar 内部，
-        // 跨区块时只有浮层自身重组，不会带动整页 LazyColumn 树。
-        // 2026-09-20：顶栏移除后需自行避让系统状态栏，否则吸顶条会被状态栏压住。
-        StatsSectionNavBar(
-            listState = listState,
-            sectionNames = sectionNames,
-            sectionStartIndices = sectionStartIndices,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-        )
     }
 }
 

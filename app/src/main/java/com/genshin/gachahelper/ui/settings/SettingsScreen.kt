@@ -13,12 +13,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -123,8 +125,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            // 2026-09-20：页面顶栏已移除，顶部需自行避让系统状态栏
-            .statusBarsPadding()
+            // 2026-09-22：状态栏避让由 GachaAppNavHost 的 Scaffold innerPadding 统一承担，
+            // 此处再 statusBarsPadding() 属重复避让，顶部凭空多空一条。
             .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp + dockContentBottomPadding()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -331,6 +333,40 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                         checked = reminderConfig.oncePerDay,
                         onCheckedChange = { viewModel.setReminderOncePerDay(it) }
                     )
+                }
+            }
+
+            // 洞天宝钱产量档位（2026-09-22 新增）：决定便笺「距上限」倒计时，
+            // 与提醒开关无关，故独立于上面的 if 分支，始终可改。
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "洞天宝钱产量：${reminderConfig.homeCoinPerHour} 个/小时",
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "按游戏里「洞天仙力」档位选。接口不返回仙力等级，只能手动定；" +
+                    "满仙力 20000 = 30 个/小时，选小了「距上限」会显示得偏长。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ReminderConfig.HOME_COIN_PER_HOUR_OPTIONS.forEach { rate ->
+                    if (reminderConfig.homeCoinPerHour == rate) {
+                        Button(onClick = { viewModel.setHomeCoinPerHour(rate) }) {
+                            Text(text = "$rate")
+                        }
+                    } else {
+                        OutlinedButton(onClick = { viewModel.setHomeCoinPerHour(rate) }) {
+                            Text(text = "$rate")
+                        }
+                    }
                 }
             }
         }

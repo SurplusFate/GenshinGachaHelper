@@ -71,7 +71,6 @@ import com.genshin.gachahelper.auth.DailyNoteData
 import com.genshin.gachahelper.auth.ResourceProjection
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
-import com.genshin.gachahelper.reminder.ReminderConfig
 import com.genshin.gachahelper.sync.SyncState
 import com.genshin.gachahelper.ui.dockContentBottomPadding
 import com.genshin.gachahelper.ui.navigation.Screen
@@ -119,11 +118,6 @@ fun HomeScreen(
     val dailySignEnabled by viewModel.dailySignEnabled.collectAsState()
     val dailySignResult by viewModel.dailySignResult.collectAsState()
 
-    // 2026-09-22：树脂 / 洞天宝钱阈值提醒。设置页是规则主体，卡片只放快捷入口
-    // （点 chip 就地改阈值，不必为了改个数专门跑一趟设置）
-    val reminderConfig by viewModel.reminderConfig.collectAsState()
-    var showReminderDialog by remember { mutableStateOf(false) }
-
     // Android 13+ 通知权限申请（仅用于展示签到结果，未授权不影响签到）
     val signContext = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -146,26 +140,6 @@ fun HomeScreen(
             onSolved = { validateJson -> viewModel.onCaptchaSolved(validateJson) },
             onDismiss = { viewModel.dismissCaptcha() },
             onError = { msg -> viewModel.reportCaptchaError(msg) }
-        )
-    }
-
-    // 树脂提醒快捷配置弹窗：与设置页共用同一份配置，改完立即按新阈值重排闹钟
-    if (showReminderDialog) {
-        ReminderConfigDialog(
-            config = reminderConfig,
-            onDismiss = { showReminderDialog = false },
-            onToggle = { enabled ->
-                viewModel.setReminderEnabled(enabled)
-                if (enabled) requestNotificationPermissionIfNeeded()
-            },
-            onResinChanged = { viewModel.setResinThreshold(it) },
-            onToggleCoin = { viewModel.setHomeCoinEnabled(it) },
-            onCoinChanged = { viewModel.setHomeCoinThreshold(it) },
-            onOncePerDayChanged = { viewModel.setReminderOncePerDay(it) },
-            onOpenSettings = {
-                showReminderDialog = false
-                navController.navigate(Screen.Settings.route)
-            }
         )
     }
 
@@ -244,12 +218,10 @@ fun HomeScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    // 2026-09-20：页面顶栏已移除，顶部间距需包含系统状态栏高度
-                    // （edge-to-edge 下原先由 Scaffold topBar 承担）
-                    top = with(androidx.compose.ui.platform.LocalDensity.current) {
-                        androidx.compose.foundation.layout.WindowInsets.statusBars
-                            .getTop(this).toDp()
-                    } + 8.dp,
+                    // 2026-09-22：9/20 顶栏移除后此处又自加了一份状态栏高度，与 Scaffold
+                    // innerPadding（无 topBar 时即为状态栏高度）重复避让，页面顶部凭空
+                    // 多空一条。状态栏统一由 GachaAppNavHost 的 Scaffold 避让，只留 8dp。
+                    top = 8.dp,
                     // 底部为悬浮 DOCK 预留空白：最后一张卡片不会被胶囊压住
                     bottom = dockContentBottomPadding() + 12.dp
                 )
@@ -267,10 +239,7 @@ fun HomeScreen(
                                 viewModel.setDailySignEnabled(enabled)
                                 if (enabled) requestNotificationPermissionIfNeeded()
                             },
-                            onManualSignIn = { viewModel.manualDailySignIn() },
-                            // 阈值提醒：卡片只放一个 chip，点开就地改（详细规则入口在设置页）
-                            reminderConfig = reminderConfig,
-                            onOpenReminderConfig = { showReminderDialog = true }
+                            onManualSignIn = { viewModel.manualDailySignIn() }
                         )
                     }
                 }
@@ -401,10 +370,7 @@ private fun DailyNoteCard(
     signEnabled: Boolean = false,
     signResult: String? = null,
     onToggleSign: (Boolean) -> Unit = {},
-    onManualSignIn: () -> Unit = {},
-    /** 树脂 / 宝钱阈值提醒配置（2026-09-22）：卡片上只用来渲染状态 chip */
-    reminderConfig: ReminderConfig = ReminderConfig(),
-    onOpenReminderConfig: () -> Unit = {}
+    onManualSignIn: () -> Unit = {}
 ) {
     val note = uiState.dailyNote
     GlassSurface(
@@ -467,23 +433,25 @@ private fun DailyNoteCard(
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "每日委托 ${note.finishedTaskNum}/${note.totalTaskNum}" +
-                        " · 周本减半 ${note.remainResinDiscount}/${note.resinDiscountLimit}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = homeTextLow()
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    // 每天只在首次启动同步一次快照，其余时间由本地推算，这里如实标注，
-                    // 避免用户把推算值误当成服务端实时值
-                    text = "快照 ${formatSyncTime(note.fetchedAt)} · 数值本地推算",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = homeTextLow()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                // 阈值提醒入口：就地改阈值，详细规则（宝钱 / 每日一次）展开在弹窗里
-                ReminderChip(config = reminderConfig, onClick = onOpenReminderConfig)
+                // 委托进度与快照时间并成一行，左右两端对齐，避免两行小字挤在一起
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "每日委托 ${note.finishedTaskNum}/${note.totalTaskNum}" +
+                            " · 周本减半 ${note.remainResinDiscount}/${note.resinDiscountLimit}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = homeTextLow()
+                    )
+                    Text(
+                        // 每天只在首次启动同步一次快照，其余时间由本地推算
+                        text = "快照 ${formatSyncTime(note.fetchedAt)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = homeTextLow()
+                    )
+                }
             } else {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -1039,130 +1007,6 @@ function startGeetest(gt, challenge, newCaptcha) {
 </script>
 </body>
 </html>"""
-
-// ------------------------------------------------------------------
-// 树脂 / 洞天宝钱阈值提醒（2026-09-22 新增）
-// 规则主体在 设置 → 树脂提醒；这里只做卡片上的快捷入口
-// ------------------------------------------------------------------
-
-/** 便笺卡片上的提醒状态 chip：未开启时也显示，点一下就能开 / 改阈值 */
-@Composable
-private fun ReminderChip(
-    config: ReminderConfig,
-    onClick: () -> Unit
-) {
-    val text = when {
-        !config.enabled -> "提醒：未开启"
-        config.homeCoinEnabled -> "提醒：树脂 ≥${config.resinThreshold} · 宝钱 ≥${config.homeCoinThreshold}"
-        else -> "提醒：树脂 ≥${config.resinThreshold}"
-    }
-    Row(
-        modifier = Modifier
-            .clip(WishShapes.pill)
-            .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            color = if (config.enabled) wishAccentGold() else homeTextLow()
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = "设置 ›",
-            style = MaterialTheme.typography.labelSmall,
-            color = homeTextLow()
-        )
-    }
-}
-
-/** 卡片快捷配置弹窗：轻量改阈值，完整说明与入口仍在设置页 */
-@Composable
-private fun ReminderConfigDialog(
-    config: ReminderConfig,
-    onDismiss: () -> Unit,
-    onToggle: (Boolean) -> Unit,
-    onResinChanged: (Int) -> Unit,
-    onToggleCoin: (Boolean) -> Unit,
-    onCoinChanged: (Int) -> Unit,
-    onOncePerDayChanged: (Boolean) -> Unit,
-    onOpenSettings: () -> Unit
-) {
-    // 拖动中只改草稿，松手才落库（落库会顺带重排闹钟，避免拖动过程疯狂排程）
-    var resinDraft by remember { mutableStateOf(config.resinThreshold.toFloat()) }
-    var coinDraft by remember { mutableStateOf(config.homeCoinThreshold.toFloat()) }
-    LaunchedEffect(config.resinThreshold) { resinDraft = config.resinThreshold.toFloat() }
-    LaunchedEffect(config.homeCoinThreshold) { coinDraft = config.homeCoinThreshold.toFloat() }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("树脂提醒") },
-        text = {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("达到阈值时提醒")
-                        Text(
-                            text = "按便笺快照 + 恢复速率推算到达时刻，用系统闹钟触发",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = homeTextLow()
-                        )
-                    }
-                    Switch(checked = config.enabled, onCheckedChange = onToggle)
-                }
-
-                if (config.enabled) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "树脂阈值 ${resinDraft.toInt()}",
-                        fontWeight = FontWeight.Bold
-                    )
-                    Slider(
-                        value = resinDraft,
-                        onValueChange = { resinDraft = it },
-                        onValueChangeFinished = { onResinChanged(resinDraft.toInt()) },
-                        valueRange = 1f..ReminderConfig.DEFAULT_RESIN_MAX.toFloat()
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("同时提醒洞天宝钱", modifier = Modifier.weight(1f))
-                        Switch(checked = config.homeCoinEnabled, onCheckedChange = onToggleCoin)
-                    }
-                    if (config.homeCoinEnabled) {
-                        Text(
-                            text = "宝钱阈值 ${coinDraft.toInt()}",
-                            fontWeight = FontWeight.Bold
-                        )
-                        Slider(
-                            value = coinDraft,
-                            onValueChange = { coinDraft = it },
-                            onValueChangeFinished = { onCoinChanged(coinDraft.toInt()) },
-                            valueRange = 1f..ReminderConfig.DEFAULT_HOME_COIN_MAX.toFloat()
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("每天只提醒一次", modifier = Modifier.weight(1f))
-                        Switch(
-                            checked = config.oncePerDay,
-                            onCheckedChange = onOncePerDayChanged
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完成") }
-        },
-        dismissButton = {
-            TextButton(onClick = onOpenSettings) { Text("去设置") }
-        }
-    )
-}
 
 /**
  * 单项资源：数值 + 进度条 + 回满倒计时。

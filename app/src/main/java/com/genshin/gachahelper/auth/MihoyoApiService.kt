@@ -793,7 +793,7 @@ class MihoyoApiService @Inject constructor(
  *
  * 字段说明：
  * - 树脂：currentResin / maxResin，resinRecoverySeconds 为距离下一点树脂的剩余秒数（满时无意义）
- * - 洞天宝钱：currentHomeCoin / maxHomeCoin，homeCoinRecoverySeconds 为距离下一点宝钱的剩余秒数
+ * - 洞天宝钱：currentHomeCoin / maxHomeCoin，homeCoinRecoverySeconds 为距离「下次结算入账」的剩余秒数
  * - 每日委托：finishedTaskNum / totalTaskNum
  * - 周本减半：remainResinDiscount / resinDiscountLimit
  */
@@ -808,6 +808,12 @@ data class DailyNoteData(
     val totalTaskNum: Int,
     val remainResinDiscount: Int,
     val resinDiscountLimit: Int,
+    /**
+     * 洞天宝钱每小时产量（个/小时）：接口不返回洞天仙力等级，由设置页选择后注入。
+     *
+     * 升级前的旧快照没有该字段，反序列化后为 0，读取统一走 [homeCoinPerHourSafe] 兜底。
+     */
+    val homeCoinPerHour: Int = HOME_COIN_DEFAULT_PER_HOUR,
     /** 本次数据拉取时刻（用于倒计时本地推算，避免每秒请求服务器） */
     val fetchedAt: Long = System.currentTimeMillis()
 ) {
@@ -815,12 +821,35 @@ data class DailyNoteData(
         /** 树脂恢复速率：8 分钟 / 点（原神固定值，接口只给相位不给速率） */
         const val RESIN_SECONDS_PER_POINT = 480L
 
-        /** 洞天宝钱恢复速率：1 小时 / 个（原神固定值） */
-        const val HOME_COIN_SECONDS_PER_POINT = 3600L
+        /**
+         * 洞天宝钱恢复模型：**每小时结算一次**，每次按「洞天仙力」档位整批入账
+         * （4~30 个/小时，满仙力 20000 仙力 = 30 个/小时）。
+         *
+         * 2026-09-22 二次修正：上一版按「连续恢复」处理（120 秒/个），总量均值
+         * 虽然对，但节奏与游戏完全错开——游戏里数值是每小时跳一批，APP 却每 2 分钟
+         * 平滑 +1，导致「回满还需」在整点前后最多差半小时以上（实测同一时刻 18:17
+         * 米游社 30 小时 16 分 vs APP 30 小时 54 分，差 38 分钟）。
+         */
+        const val HOME_COIN_PERIOD_SECONDS = 3600L
+
+        /** 洞天宝钱每小时产量兜底值（满仙力档位 30 个/小时；低仙力档位为 4~30） */
+        const val HOME_COIN_DEFAULT_PER_HOUR = 30
+
+        /** 洞天宝钱产量档位上下限：0 仙力 4 个/小时 ~ 满仙力 20000 = 30 个/小时 */
+        const val HOME_COIN_MIN_PER_HOUR = 4
+        const val HOME_COIN_MAX_PER_HOUR = 30
     }
 
     val resinFull: Boolean get() = currentResin >= maxResin
     val homeCoinFull: Boolean get() = currentHomeCoin >= maxHomeCoin
+
+    /** 有效的每小时产量：兼容旧快照（缺字段 = 0）与越界值 */
+    val homeCoinPerHourSafe: Int
+        get() = if (homeCoinPerHour in HOME_COIN_MIN_PER_HOUR..HOME_COIN_MAX_PER_HOUR) {
+            homeCoinPerHour
+        } else {
+            HOME_COIN_DEFAULT_PER_HOUR
+        }
 
     /**
      * [now] 时刻的树脂状态（纯本地推算，不请求服务器）。
@@ -839,11 +868,10 @@ data class DailyNoteData(
 
     /** [now] 时刻的洞天宝钱状态（纯本地推算，不请求服务器） */
     fun homeCoinAt(now: Long = System.currentTimeMillis()): ResourceProjection =
-        project(
+        projectHomeCoin(
             current = currentHomeCoin,
             max = maxHomeCoin,
             recoverySeconds = homeCoinRecoverySeconds,
-            secondsPerPoint = HOME_COIN_SECONDS_PER_POINT,
             now = now
         )
 
@@ -856,9 +884,13 @@ data class DailyNoteData(
     fun resinNextPointInSeconds(): Long =
         normalizeNextPoint(resinRecoverySeconds, RESIN_SECONDS_PER_POINT, currentResin, maxResin)
 
-    /** 洞天宝钱快照时刻起算的「距下一点恢复」剩余秒数 */
-    fun homeCoinNextPointInSeconds(): Long =
-        normalizeNextPoint(homeCoinRecoverySeconds, HOME_COIN_SECONDS_PER_POINT, currentHomeCoin, maxHomeCoin)
+    /** 洞天宝钱快照时刻起算的「距下次结算入账」剩余秒数（已满上限时为 0） */
+    fun homeCoinNextBatchInSeconds(): Long =
+        if (currentHomeCoin >= maxHomeCoin) 0L
+        else normalizeNextRecovery(homeCoinRecoverySeconds, currentHomeCoin, maxHomeCoin)
+
+    /** 旧命名兼容：等价于 [homeCoinNextBatchInSeconds] */
+    fun homeCoinNextPointInSeconds(): Long = homeCoinNextBatchInSeconds()
 
     /**
      * 树脂推算值首次达到 [threshold] 的时刻（毫秒时间戳）。
@@ -876,16 +908,22 @@ data class DailyNoteData(
             now = now
         )
 
-    /** 洞天宝钱推算值首次达到 [threshold] 的时刻（毫秒时间戳） */
-    fun homeCoinReachAt(threshold: Int, now: Long = System.currentTimeMillis()): Long? =
-        reachAt(
-            current = currentHomeCoin,
-            max = maxHomeCoin,
-            nextPointInSeconds = homeCoinNextPointInSeconds(),
-            secondsPerPoint = HOME_COIN_SECONDS_PER_POINT,
-            threshold = threshold,
-            now = now
-        )
+    /**
+     * 洞天宝钱推算值首次达到 [threshold] 的时刻（毫秒时间戳，阶梯模型）。
+     *
+     * 例：还差 60 个、每小时 30 个 → 需要 2 个结算批次，即「距下次结算的时刻
+     * + 1 个周期」。
+     */
+    fun homeCoinReachAt(threshold: Int, now: Long = System.currentTimeMillis()): Long? {
+        if (threshold <= 0 || threshold > maxHomeCoin) return null
+        if (currentHomeCoin >= threshold) return now
+        if (currentHomeCoin >= maxHomeCoin) return null
+        val batches = homeCoinBatches(threshold - currentHomeCoin).coerceAtLeast(1L)
+        val firstBatchAt = fetchedAt + normalizeNextRecovery(
+            homeCoinRecoverySeconds, currentHomeCoin, maxHomeCoin
+        ) * 1000L
+        return firstBatchAt + (batches - 1) * HOME_COIN_PERIOD_SECONDS * 1000L
+    }
 
     private fun reachAt(
         current: Int,
@@ -904,6 +942,79 @@ data class DailyNoteData(
         // 从 current 涨到 threshold 共 (threshold - current) 点，其中第 1 点即"下一点"，
         // 其余按固定单点周期顺延
         return nextPointAt + (threshold - current - 1) * periodMs
+    }
+
+    /**
+     * 服务端 `home_coin_recovery_time` 语义归一：统一为「距下次结算入账的剩余秒数」。
+     *
+     * 常规情况下该字段就是距下次结算的秒数（0~[HOME_COIN_PERIOD_SECONDS]）；
+     * 个别端点/版本会给「距回满的秒数」，这里按其理论上限（批次 × 周期）自适应反推，
+     * 避免换端点后锚点整体漂移。
+     */
+    private fun normalizeNextRecovery(recoverySeconds: Long, current: Int, max: Int): Long {
+        if (recoverySeconds <= 0L) return 0L
+        if (recoverySeconds <= HOME_COIN_PERIOD_SECONDS) return recoverySeconds
+        val batchesToFull = homeCoinBatches(max - current).coerceAtLeast(1L)
+        val span = batchesToFull * HOME_COIN_PERIOD_SECONDS
+        val next = if (recoverySeconds <= span) {
+            recoverySeconds - (batchesToFull - 1) * HOME_COIN_PERIOD_SECONDS
+        } else {
+            recoverySeconds % HOME_COIN_PERIOD_SECONDS
+        }
+        return next.coerceIn(0L, HOME_COIN_PERIOD_SECONDS)
+    }
+
+    /** 从缺口 [remaining] 个涨满上限，还需要多少个结算批次（向上取整） */
+    private fun homeCoinBatches(remaining: Int, perHour: Int = homeCoinPerHourSafe): Long =
+        if (remaining <= 0) 0L
+        else ((remaining + perHour - 1) / perHour).toLong()
+
+    /**
+     * 洞天宝钱推算：**按小时批量结算的阶梯模型**（与游戏 / 米游社一致）。
+     *
+     * 快照里的 [current] 是「最近一次结算之后」的值，[recoverySeconds] 指向下一次
+     * 结算；此后每过 [HOME_COIN_PERIOD_SECONDS] 整批 +[HOME_COIN_PER_HOUR] 个，
+     * 直到 [max] 封顶。
+     *
+     * 与连续模型的关键差异：数值不是每 2 分钟挪 1 格，而是每小时跳一批；因此
+     * 「距回满」= 距下次结算 + (批次 - 1) × 1 小时，和米游社口径完全一致。
+     */
+    private fun projectHomeCoin(
+        current: Int,
+        max: Int,
+        recoverySeconds: Long,
+        now: Long
+    ): ResourceProjection {
+        if (current >= max) {
+            return ResourceProjection(
+                value = max,
+                max = max,
+                nextPointInSeconds = 0L,
+                fullInSeconds = 0L
+            )
+        }
+        val perHour = homeCoinPerHourSafe
+        val periodMs = HOME_COIN_PERIOD_SECONDS * 1000L
+        val firstBatchAt = fetchedAt + normalizeNextRecovery(recoverySeconds, current, max) * 1000L
+
+        // 已完成的结算批次（含"正好到点"这一次）
+        val settledBatches = if (now >= firstBatchAt) (now - firstBatchAt) / periodMs + 1L else 0L
+        val value = (current + settledBatches * perHour).coerceAtMost(max.toLong()).toInt()
+        val nextBatchAt = firstBatchAt + settledBatches * periodMs
+
+        val remaining = (max - value).coerceAtLeast(0)
+        val fullInMs = if (remaining == 0) {
+            0L
+        } else {
+            val batches = homeCoinBatches(remaining)
+            (nextBatchAt - now) + (batches - 1) * periodMs
+        }
+        return ResourceProjection(
+            value = value,
+            max = max,
+            nextPointInSeconds = ((nextBatchAt - now).coerceAtLeast(0L)) / 1000L,
+            fullInSeconds = fullInMs.coerceAtLeast(0L) / 1000L
+        )
     }
 
     /**
@@ -970,8 +1081,12 @@ data class DailyNoteData(
         }
         val value = (current + gained).coerceAtMost(max.toLong()).toInt()
 
-        // 距下一点：走过整周期后要按周期取余回绕，不能一直钳在 0
-        val nextIn = if (value >= max) {
+        // 距下一点：走过整周期后要按周期取余回绕，不能一直钳在 0。
+        // 2026-09-22 修复：这里参与运算的 now / nextPointAt / periodMs 全是毫秒，
+        // 若直接写进名为 Seconds 的字段，下游 formatCountdown 会把毫秒当秒换算，
+        // 小时位放大 1000 倍（实测宝钱显示"回满还需 1167531:21:11"）。
+        // 运算统一留在毫秒，出口再 /1000 归还秒语义。
+        val nextInMs = if (value >= max) {
             0L
         } else {
             val rem = ((now - nextPointAt) % periodMs + periodMs) % periodMs
@@ -979,7 +1094,7 @@ data class DailyNoteData(
         }
         // 距回满：先补满"下一点"，其余按整周期顺延（(max-current-1) 个周期）
         val pointsToFull = (max - current - 1).coerceAtLeast(0)
-        val fullIn = if (value >= max) {
+        val fullInMs = if (value >= max) {
             0L
         } else {
             (nextPointAt + pointsToFull * periodMs - now).coerceAtLeast(0L)
@@ -987,8 +1102,8 @@ data class DailyNoteData(
         return ResourceProjection(
             value = value,
             max = max,
-            nextPointInSeconds = nextIn,
-            fullInSeconds = fullIn
+            nextPointInSeconds = nextInMs / 1000L,
+            fullInSeconds = fullInMs / 1000L
         )
     }
 }

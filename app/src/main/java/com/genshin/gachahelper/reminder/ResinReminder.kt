@@ -51,6 +51,13 @@ data class ReminderConfig(
     /** 是否同时提醒洞天宝钱 */
     val homeCoinEnabled: Boolean = false,
     val homeCoinThreshold: Int = 2000,
+    /**
+     * 洞天宝钱每小时产量（个/小时）。
+     *
+     * 游戏内该值随「洞天仙力」档位变化（0 仙力 4 个/小时 ~ 满仙力 20000 = 30 个/小时），
+     * 而每日便笺接口不返回仙力等级，故由用户在设置页按档位选择。
+     */
+    val homeCoinPerHour: Int = DEFAULT_HOME_COIN_PER_HOUR,
     /** true=每种资源每天最多提醒一次；false=每次达到都提醒（10 分钟防抖） */
     val oncePerDay: Boolean = true
 ) {
@@ -60,6 +67,16 @@ data class ReminderConfig(
 
         /** 树脂上限（接口返回 maxResin，兜底值 200） */
         const val DEFAULT_RESIN_MAX = 200
+
+        /** 洞天宝钱每小时产量默认值：满仙力档位 30 个/小时 */
+        const val DEFAULT_HOME_COIN_PER_HOUR = 30
+
+        /** 洞天宝钱产量档位上下限（0 仙力 4 个/小时 ~ 满仙力 30 个/小时） */
+        const val MIN_HOME_COIN_PER_HOUR = 4
+        const val MAX_HOME_COIN_PER_HOUR = 30
+
+        /** 游戏内洞天仙力对应的全部产量档位，供设置页选择 */
+        val HOME_COIN_PER_HOUR_OPTIONS = listOf(4, 8, 12, 16, 20, 22, 24, 26, 28, 30)
     }
 }
 
@@ -75,6 +92,7 @@ class ResinReminderStore @Inject constructor(
         private val KEY_RESIN_THRESHOLD = intPreferencesKey("resin_threshold")
         private val KEY_COIN_ENABLED = booleanPreferencesKey("home_coin_enabled")
         private val KEY_COIN_THRESHOLD = intPreferencesKey("home_coin_threshold")
+        private val KEY_COIN_PER_HOUR = intPreferencesKey("home_coin_per_hour")
         private val KEY_ONCE_PER_DAY = booleanPreferencesKey("once_per_day")
         private val KEY_LAST_RESIN_AT = longPreferencesKey("last_resin_notify_at")
         private val KEY_LAST_COIN_AT = longPreferencesKey("last_coin_notify_at")
@@ -90,6 +108,11 @@ class ResinReminderStore @Inject constructor(
             resinThreshold = prefs[KEY_RESIN_THRESHOLD] ?: defaults.resinThreshold,
             homeCoinEnabled = prefs[KEY_COIN_ENABLED] ?: defaults.homeCoinEnabled,
             homeCoinThreshold = prefs[KEY_COIN_THRESHOLD] ?: defaults.homeCoinThreshold,
+            homeCoinPerHour = (prefs[KEY_COIN_PER_HOUR] ?: defaults.homeCoinPerHour)
+                .coerceIn(
+                    ReminderConfig.MIN_HOME_COIN_PER_HOUR,
+                    ReminderConfig.MAX_HOME_COIN_PER_HOUR
+                ),
             oncePerDay = prefs[KEY_ONCE_PER_DAY] ?: defaults.oncePerDay
         )
     }
@@ -102,6 +125,7 @@ class ResinReminderStore @Inject constructor(
             prefs[KEY_RESIN_THRESHOLD] = config.resinThreshold
             prefs[KEY_COIN_ENABLED] = config.homeCoinEnabled
             prefs[KEY_COIN_THRESHOLD] = config.homeCoinThreshold
+            prefs[KEY_COIN_PER_HOUR] = config.homeCoinPerHour
             prefs[KEY_ONCE_PER_DAY] = config.oncePerDay
         }
     }

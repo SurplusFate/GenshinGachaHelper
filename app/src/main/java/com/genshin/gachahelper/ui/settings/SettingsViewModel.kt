@@ -118,6 +118,21 @@ class SettingsViewModel @Inject constructor(
 
     fun setHomeCoinEnabled(enabled: Boolean) = updateReminder { it.copy(homeCoinEnabled = enabled) }
 
+    /**
+     * 洞天宝钱每小时产量档位。
+     *
+     * 接口不返回洞天仙力等级，产量只能由用户按游戏内档位选择；档位直接决定
+     * 便笺「距上限」倒计时（批次 = 缺口 / 每小时产量）。
+     */
+    fun setHomeCoinPerHour(perHour: Int) = updateReminder {
+        it.copy(
+            homeCoinPerHour = perHour.coerceIn(
+                ReminderConfig.MIN_HOME_COIN_PER_HOUR,
+                ReminderConfig.MAX_HOME_COIN_PER_HOUR
+            )
+        )
+    }
+
     fun setHomeCoinThreshold(threshold: Int) = updateReminder {
         it.copy(homeCoinThreshold = threshold.coerceIn(1, ReminderConfig.DEFAULT_HOME_COIN_MAX))
     }
