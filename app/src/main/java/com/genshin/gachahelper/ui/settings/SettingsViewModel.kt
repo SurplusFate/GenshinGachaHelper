@@ -6,9 +6,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.auth.AppLog
 import com.genshin.gachahelper.auth.AuthRepository
+import com.genshin.gachahelper.backup.BackupTrigger
+import com.genshin.gachahelper.backup.GachaBackupManager
+import com.genshin.gachahelper.backup.WebDavConfig
+import com.genshin.gachahelper.backup.WebDavConfigStore
+import com.genshin.gachahelper.backup.WebDavResult
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.repository.GachaRepository
+import com.genshin.gachahelper.reminder.ReminderConfig
+import com.genshin.gachahelper.reminder.ResinReminderManager
+import com.genshin.gachahelper.reminder.ResinReminderStore
 import com.genshin.gachahelper.signin.SignInRepository
 import com.genshin.gachahelper.sync.GachaDataImporter
 import com.genshin.gachahelper.ui.logexport.LogExportDialogState
@@ -40,8 +48,14 @@ class SettingsViewModel @Inject constructor(
     private val sessionEventBus: SessionEventBus,
     private val themeRepository: ThemeRepository,
     private val signInRepository: SignInRepository,
+    // 2026-09-21：WebDAV 备份配置读取与备份触发
+    private val webDavConfigStore: WebDavConfigStore,
+    private val backupManager: GachaBackupManager,
     // 2026-09-20：日志导出功能从首页迁至「设置 → 关于」区块（测试期诊断入口收编）
     private val appLog: AppLog,
+    // 2026-09-22：树脂/洞天宝钱阈值提醒（设置页为规则主体入口）
+    private val reminderStore: ResinReminderStore,
+    private val reminderManager: ResinReminderManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -63,6 +77,109 @@ class SettingsViewModel @Inject constructor(
     // setDailySignEnabled/manualDailySignIn）已整体迁至便笺页 HomeViewModel，
     // 此处不再暴露。signInRepository 注入保留——logout 时仍需 onLogout()
     // 关闭自动签到任务。
+
+    // ------------------------------------------------------------------
+    // WebDAV 抽卡记录备份（2026-09-21 新增）
+    // ------------------------------------------------------------------
+
+    /** WebDAV 配置（输入即落库，UI 直接绑定） */
+    val webDavConfig: StateFlow<WebDavConfig> = webDavConfigStore.configFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = WebDavConfig()
+        )
+
+    /** 测试连接 / 手动备份的即时反馈 */
+    private val _webDavMessage = MutableStateFlow<String?>(null)
+    val webDavMessage: StateFlow<String?> = _webDavMessage.asStateFlow()
+
+    /** 动作进行中标记（用于禁用按钮，防重复触发） */
+    private val _webDavBusy = MutableStateFlow(false)
+    val webDavBusy: StateFlow<Boolean> = _webDavBusy.asStateFlow()
+
+    // ------------------------------------------------------------------
+    // 树脂 / 洞天宝钱阈值提醒（2026-09-22 新增）
+    // ------------------------------------------------------------------
+
+    /** 提醒配置：设置页滑杆与便笺卡片快捷入口读写的是同一份持久化数据 */
+    val reminderConfig: StateFlow<ReminderConfig> = reminderStore.configFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = ReminderConfig()
+        )
+
+    fun setReminderEnabled(enabled: Boolean) = updateReminder { it.copy(enabled = enabled) }
+
+    fun setResinThreshold(threshold: Int) = updateReminder {
+        it.copy(resinThreshold = threshold.coerceIn(1, ReminderConfig.DEFAULT_RESIN_MAX))
+    }
+
+    fun setHomeCoinEnabled(enabled: Boolean) = updateReminder { it.copy(homeCoinEnabled = enabled) }
+
+    fun setHomeCoinThreshold(threshold: Int) = updateReminder {
+        it.copy(homeCoinThreshold = threshold.coerceIn(1, ReminderConfig.DEFAULT_HOME_COIN_MAX))
+    }
+
+    fun setReminderOncePerDay(oncePerDay: Boolean) = updateReminder { it.copy(oncePerDay = oncePerDay) }
+
+    /** 落库后立即按新阈值重排闹钟（关闭开关时 [ResinReminderManager.reschedule] 内部会先取消） */
+    private fun updateReminder(transform: (ReminderConfig) -> ReminderConfig) {
+        viewModelScope.launch { reminderManager.update(transform) }
+    }
+
+    fun setWebDavEnabled(enabled: Boolean) {
+        viewModelScope.launch { webDavConfigStore.setEnabled(enabled) }
+    }
+
+    fun setWebDavUrl(url: String) {
+        viewModelScope.launch { webDavConfigStore.setUrl(url) }
+    }
+
+    fun setWebDavUsername(username: String) {
+        viewModelScope.launch { webDavConfigStore.setUsername(username) }
+    }
+
+    fun setWebDavPassword(password: String) {
+        viewModelScope.launch { webDavConfigStore.setPassword(password) }
+    }
+
+    fun setWebDavRemoteDir(dir: String) {
+        viewModelScope.launch { webDavConfigStore.setRemoteDir(dir) }
+    }
+
+    /** 用当前配置探测 WebDAV 服务器连通性与鉴权 */
+    fun testWebDavConnection() {
+        if (_webDavBusy.value) return
+        viewModelScope.launch {
+            _webDavBusy.value = true
+            _webDavMessage.value = "正在测试连接…"
+            val result = runCatching { backupManager.testConnection() }
+                .getOrElse { WebDavResult.Failure(it.message ?: "未知错误") }
+            _webDavMessage.value = when (result) {
+                is WebDavResult.Success -> result.message
+                is WebDavResult.Failure -> "失败：${result.message}"
+            }
+            _webDavBusy.value = false
+        }
+    }
+
+    /** 立即备份一次（不受自动备份开关限制） */
+    fun backupNowByWebDav() {
+        if (_webDavBusy.value) return
+        viewModelScope.launch {
+            _webDavBusy.value = true
+            _webDavMessage.value = "正在备份…"
+            val result = runCatching { backupManager.backupNow(BackupTrigger.MANUAL) }
+                .getOrElse { WebDavResult.Failure(it.message ?: "未知错误") }
+            _webDavMessage.value = when (result) {
+                is WebDavResult.Success -> result.message
+                is WebDavResult.Failure -> "失败：${result.message}"
+            }
+            _webDavBusy.value = false
+        }
+    }
 
     // ------------------------------------------------------------------
     // 日志导出（2026-09-20 从 HomeViewModel 迁入，入口在「关于」区块）
@@ -280,6 +397,8 @@ class SettingsViewModel @Inject constructor(
             // 退出登录 = 关闭自动签到（取消周期任务 + 清通知）+ 清登录凭证 + 清空本地抽卡数据。
             // 数据必须一次性清干净：否则历史页 / 统计页会继续展示上一个账号的记录。
             signInRepository.onLogout()
+            // 退出登录后不保留上一个账号的便笺提醒闹钟（快照也会在首页被清掉）
+            reminderManager.cancel()
             authRepository.logout()
             gachaRepository.clearUserData()
             sessionEventBus.emit(SessionEvent.LogoutCompleted)

@@ -3,6 +3,7 @@ package com.genshin.gachahelper.sync
 import com.genshin.gachahelper.auth.ApiResult
 import com.genshin.gachahelper.auth.AuthRepository
 import com.genshin.gachahelper.auth.MihoyoApiService
+import com.genshin.gachahelper.backup.GachaBackupManager
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.local.entity.AccountEntity
@@ -10,8 +11,11 @@ import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.remote.GachaApiClient
 import com.genshin.gachahelper.remote.GachaResponseParser
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,8 +57,16 @@ class GachaSyncService @Inject constructor(
     private val authRepository: AuthRepository,
     private val mihoyoApi: MihoyoApiService,
     private val gachaRepository: GachaRepository,
-    private val sessionEventBus: SessionEventBus
+    private val sessionEventBus: SessionEventBus,
+    // 2026-09-21：同步成功后触发 WebDAV 自动备份（开关关闭时内部直接返回）
+    private val backupManager: GachaBackupManager
 ) {
+
+    /**
+     * 备份专用协程作用域：备份在同步流程之外异步执行，
+     * 不阻塞 syncAll 返回、也不把备份失败传染成同步失败。
+     */
+    private val backupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     companion object {
         /** -110 冷却时间（秒） */
         private const val RATE_LIMIT_COOLDOWN_SECONDS = 60
@@ -170,6 +182,10 @@ class GachaSyncService @Inject constructor(
 
             _syncState.value = SyncState.Success(totalNew, totalRecords)
             sessionEventBus.emit(SessionEvent.DataSynced)
+
+            // 每次成功获取最新抽卡记录后，异步触发一次 WebDAV 备份。
+            // 独立 scope + 内部 try/catch：备份失败不影响同步结果状态。
+            backupScope.launch { backupManager.autoBackup() }
 
         } catch (e: RateLimitedException) {
             // -110：进入冷却，不刷新 AuthKey

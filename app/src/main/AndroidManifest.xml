@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 树脂/洞天宝钱阈值提醒：需要精确闹钟才能在预计时刻准点响（Android 12+ 可被系统收回，届时降级为非精确） -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <!-- 崩溃日志只写应用内部存储，不再需要外部存储写权限 -->
     <application
@@ -16,7 +18,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.GenshinGachaHelper"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
@@ -41,6 +43,15 @@
             android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 树脂/洞天宝钱阈值提醒的闹钟回调：由 AlarmManager 到点后拉起（无需导出，仅本应用 PendingIntent 触发） -->
+        <receiver
+            android:name=".reminder.ResinReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.genshin.gachahelper.action.RESIN_REMINDER" />
             </intent-filter>
         </receiver>
 

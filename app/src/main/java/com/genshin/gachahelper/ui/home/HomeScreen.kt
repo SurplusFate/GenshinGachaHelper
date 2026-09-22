@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,14 +37,17 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,8 +68,10 @@ import com.genshin.gachahelper.analysis.LuckConfidence
 import com.genshin.gachahelper.analysis.PoolStats
 import com.genshin.gachahelper.auth.CaptchaData
 import com.genshin.gachahelper.auth.DailyNoteData
+import com.genshin.gachahelper.auth.ResourceProjection
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
+import com.genshin.gachahelper.reminder.ReminderConfig
 import com.genshin.gachahelper.sync.SyncState
 import com.genshin.gachahelper.ui.dockContentBottomPadding
 import com.genshin.gachahelper.ui.navigation.Screen
@@ -113,6 +119,11 @@ fun HomeScreen(
     val dailySignEnabled by viewModel.dailySignEnabled.collectAsState()
     val dailySignResult by viewModel.dailySignResult.collectAsState()
 
+    // 2026-09-22：树脂 / 洞天宝钱阈值提醒。设置页是规则主体，卡片只放快捷入口
+    // （点 chip 就地改阈值，不必为了改个数专门跑一趟设置）
+    val reminderConfig by viewModel.reminderConfig.collectAsState()
+    var showReminderDialog by remember { mutableStateOf(false) }
+
     // Android 13+ 通知权限申请（仅用于展示签到结果，未授权不影响签到）
     val signContext = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -135,6 +146,26 @@ fun HomeScreen(
             onSolved = { validateJson -> viewModel.onCaptchaSolved(validateJson) },
             onDismiss = { viewModel.dismissCaptcha() },
             onError = { msg -> viewModel.reportCaptchaError(msg) }
+        )
+    }
+
+    // 树脂提醒快捷配置弹窗：与设置页共用同一份配置，改完立即按新阈值重排闹钟
+    if (showReminderDialog) {
+        ReminderConfigDialog(
+            config = reminderConfig,
+            onDismiss = { showReminderDialog = false },
+            onToggle = { enabled ->
+                viewModel.setReminderEnabled(enabled)
+                if (enabled) requestNotificationPermissionIfNeeded()
+            },
+            onResinChanged = { viewModel.setResinThreshold(it) },
+            onToggleCoin = { viewModel.setHomeCoinEnabled(it) },
+            onCoinChanged = { viewModel.setHomeCoinThreshold(it) },
+            onOncePerDayChanged = { viewModel.setReminderOncePerDay(it) },
+            onOpenSettings = {
+                showReminderDialog = false
+                navController.navigate(Screen.Settings.route)
+            }
         )
     }
 
@@ -236,7 +267,10 @@ fun HomeScreen(
                                 viewModel.setDailySignEnabled(enabled)
                                 if (enabled) requestNotificationPermissionIfNeeded()
                             },
-                            onManualSignIn = { viewModel.manualDailySignIn() }
+                            onManualSignIn = { viewModel.manualDailySignIn() },
+                            // 阈值提醒：卡片只放一个 chip，点开就地改（详细规则入口在设置页）
+                            reminderConfig = reminderConfig,
+                            onOpenReminderConfig = { showReminderDialog = true }
                         )
                     }
                 }
@@ -367,7 +401,10 @@ private fun DailyNoteCard(
     signEnabled: Boolean = false,
     signResult: String? = null,
     onToggleSign: (Boolean) -> Unit = {},
-    onManualSignIn: () -> Unit = {}
+    onManualSignIn: () -> Unit = {},
+    /** 树脂 / 宝钱阈值提醒配置（2026-09-22）：卡片上只用来渲染状态 chip */
+    reminderConfig: ReminderConfig = ReminderConfig(),
+    onOpenReminderConfig: () -> Unit = {}
 ) {
     val note = uiState.dailyNote
     GlassSurface(
@@ -416,20 +453,16 @@ private fun DailyNoteCard(
                 ) {
                     DailyNoteStat(
                         label = "树脂",
-                        current = note.currentResin,
-                        max = note.maxResin,
-                        recoverySeconds = note.resinRecoverySeconds,
                         fetchedAt = note.fetchedAt,
                         accent = wishAccentGold(),
+                        project = { now -> note.resinAt(now) },
                         modifier = Modifier.weight(1f)
                     )
                     DailyNoteStat(
                         label = "洞天宝钱",
-                        current = note.currentHomeCoin,
-                        max = note.maxHomeCoin,
-                        recoverySeconds = note.homeCoinRecoverySeconds,
                         fetchedAt = note.fetchedAt,
                         accent = HomeCoinColor,
+                        project = { now -> note.homeCoinAt(now) },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -440,6 +473,17 @@ private fun DailyNoteCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = homeTextLow()
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    // 每天只在首次启动同步一次快照，其余时间由本地推算，这里如实标注，
+                    // 避免用户把推算值误当成服务端实时值
+                    text = "快照 ${formatSyncTime(note.fetchedAt)} · 数值本地推算",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = homeTextLow()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                // 阈值提醒入口：就地改阈值，详细规则（宝钱 / 每日一次）展开在弹窗里
+                ReminderChip(config = reminderConfig, onClick = onOpenReminderConfig)
             } else {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -996,19 +1040,158 @@ function startGeetest(gt, challenge, newCaptcha) {
 </body>
 </html>"""
 
-/** 单项资源：数值 + 进度条 + 回满倒计时 */
+// ------------------------------------------------------------------
+// 树脂 / 洞天宝钱阈值提醒（2026-09-22 新增）
+// 规则主体在 设置 → 树脂提醒；这里只做卡片上的快捷入口
+// ------------------------------------------------------------------
+
+/** 便笺卡片上的提醒状态 chip：未开启时也显示，点一下就能开 / 改阈值 */
+@Composable
+private fun ReminderChip(
+    config: ReminderConfig,
+    onClick: () -> Unit
+) {
+    val text = when {
+        !config.enabled -> "提醒：未开启"
+        config.homeCoinEnabled -> "提醒：树脂 ≥${config.resinThreshold} · 宝钱 ≥${config.homeCoinThreshold}"
+        else -> "提醒：树脂 ≥${config.resinThreshold}"
+    }
+    Row(
+        modifier = Modifier
+            .clip(WishShapes.pill)
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = if (config.enabled) wishAccentGold() else homeTextLow()
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = "设置 ›",
+            style = MaterialTheme.typography.labelSmall,
+            color = homeTextLow()
+        )
+    }
+}
+
+/** 卡片快捷配置弹窗：轻量改阈值，完整说明与入口仍在设置页 */
+@Composable
+private fun ReminderConfigDialog(
+    config: ReminderConfig,
+    onDismiss: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onResinChanged: (Int) -> Unit,
+    onToggleCoin: (Boolean) -> Unit,
+    onCoinChanged: (Int) -> Unit,
+    onOncePerDayChanged: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    // 拖动中只改草稿，松手才落库（落库会顺带重排闹钟，避免拖动过程疯狂排程）
+    var resinDraft by remember { mutableStateOf(config.resinThreshold.toFloat()) }
+    var coinDraft by remember { mutableStateOf(config.homeCoinThreshold.toFloat()) }
+    LaunchedEffect(config.resinThreshold) { resinDraft = config.resinThreshold.toFloat() }
+    LaunchedEffect(config.homeCoinThreshold) { coinDraft = config.homeCoinThreshold.toFloat() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("树脂提醒") },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("达到阈值时提醒")
+                        Text(
+                            text = "按便笺快照 + 恢复速率推算到达时刻，用系统闹钟触发",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = homeTextLow()
+                        )
+                    }
+                    Switch(checked = config.enabled, onCheckedChange = onToggle)
+                }
+
+                if (config.enabled) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "树脂阈值 ${resinDraft.toInt()}",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Slider(
+                        value = resinDraft,
+                        onValueChange = { resinDraft = it },
+                        onValueChangeFinished = { onResinChanged(resinDraft.toInt()) },
+                        valueRange = 1f..ReminderConfig.DEFAULT_RESIN_MAX.toFloat()
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("同时提醒洞天宝钱", modifier = Modifier.weight(1f))
+                        Switch(checked = config.homeCoinEnabled, onCheckedChange = onToggleCoin)
+                    }
+                    if (config.homeCoinEnabled) {
+                        Text(
+                            text = "宝钱阈值 ${coinDraft.toInt()}",
+                            fontWeight = FontWeight.Bold
+                        )
+                        Slider(
+                            value = coinDraft,
+                            onValueChange = { coinDraft = it },
+                            onValueChangeFinished = { onCoinChanged(coinDraft.toInt()) },
+                            valueRange = 1f..ReminderConfig.DEFAULT_HOME_COIN_MAX.toFloat()
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("每天只提醒一次", modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = config.oncePerDay,
+                            onCheckedChange = onOncePerDayChanged
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成") }
+        },
+        dismissButton = {
+            TextButton(onClick = onOpenSettings) { Text("去设置") }
+        }
+    )
+}
+
+/**
+ * 单项资源：数值 + 进度条 + 回满倒计时。
+ *
+ * 数值与倒计时均由便笺快照 + 本地时钟每秒外推（[project]），页面停留期间
+ * 不发起任何网络请求；网络同步每天只在首次启动时发生一次。
+ */
 @Composable
 private fun DailyNoteStat(
     label: String,
-    current: Int,
-    max: Int,
-    recoverySeconds: Long,
     fetchedAt: Long,
     accent: Color,
+    project: (Long) -> ResourceProjection,
     modifier: Modifier = Modifier
 ) {
-    val ratio = if (max > 0) (current.toFloat() / max).coerceIn(0f, 1f) else 0f
-    val full = current >= max
+    var now by remember(fetchedAt) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(fetchedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+
+    val projection = project(now)
+    val ratio = if (projection.max > 0) {
+        (projection.value.toFloat() / projection.max).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
     Column(modifier = modifier) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
@@ -1018,13 +1201,13 @@ private fun DailyNoteStat(
             )
             Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = "$current",
+                text = "${projection.value}",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Black,
                 color = accent
             )
             Text(
-                text = "/$max",
+                text = "/${projection.max}",
                 style = MaterialTheme.typography.labelSmall,
                 color = homeTextLow()
             )
@@ -1038,31 +1221,17 @@ private fun DailyNoteStat(
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = if (full) "已回满"
-            else "回满还需 ${recoveryCountdown(recoverySeconds, fetchedAt)}",
+            text = if (projection.isFull) "已回满"
+            else "回满还需 ${formatCountdown(projection.fullInSeconds)}",
             style = MaterialTheme.typography.labelSmall,
             color = homeTextLow()
         )
     }
 }
 
-/**
- * 本地推算恢复倒计时，不额外请求服务器。
- *
- * 接口返回的是「拉取时刻」的剩余秒数，配合 [fetchedAt] 本地递减，
- * 每秒刷新一次文案；归零后停在 00:00，等待下次拉取校正。
- */
-@Composable
-private fun recoveryCountdown(totalSeconds: Long, fetchedAt: Long): String {
-    var now by remember(fetchedAt) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(fetchedAt) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(1_000)
-        }
-    }
-    val elapsed = ((now - fetchedAt) / 1000).coerceAtLeast(0L)
-    val remain = (totalSeconds - elapsed).coerceAtLeast(0L)
+/** 秒数 → 倒计时文案（≥ 1 小时显示 h:mm:ss，否则 mm:ss） */
+private fun formatCountdown(totalSeconds: Long): String {
+    val remain = totalSeconds.coerceAtLeast(0L)
     val hours = remain / 3600
     val minutes = remain % 3600 / 60
     val seconds = remain % 60
@@ -1072,6 +1241,10 @@ private fun recoveryCountdown(totalSeconds: Long, fetchedAt: Long): String {
         String.format(Locale.ROOT, "%02d:%02d", minutes, seconds)
     }
 }
+
+/** 便笺快照的同步时刻文案（MM-dd HH:mm） */
+private fun formatSyncTime(fetchedAt: Long): String =
+    java.text.SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(java.util.Date(fetchedAt))
 
 // ============================ Hero + 运气环 ============================
 

@@ -17,15 +17,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,12 +38,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.genshin.gachahelper.BuildConfig
 import com.genshin.gachahelper.auth.AppLog
+import com.genshin.gachahelper.reminder.ReminderConfig
 import com.genshin.gachahelper.ui.dockContentBottomPadding
 import com.genshin.gachahelper.ui.GlassSurface
 import com.genshin.gachahelper.ui.logexport.LogExportDialog
@@ -55,6 +64,50 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val logExportDialog by viewModel.logExportDialog.collectAsState()
     var showClearDataDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
+
+    // ---- WebDAV 备份状态与输入草稿（2026-09-21 新增）----
+    // 输入草稿：TextField 绑草稿即时回显，同时写库，避免 DataStore 回读延迟导致丢字
+    val webDavConfig by viewModel.webDavConfig.collectAsState()
+    val webDavMessage by viewModel.webDavMessage.collectAsState()
+    val webDavBusy by viewModel.webDavBusy.collectAsState()
+    var webDavUrlDraft by remember { mutableStateOf("") }
+    var webDavUserDraft by remember { mutableStateOf("") }
+    var webDavPasswordDraft by remember { mutableStateOf("") }
+    var webDavDirDraft by remember { mutableStateOf("") }
+    // 已保存配置首次就绪后回填一次草稿
+    LaunchedEffect(Unit) {
+        val cfg = viewModel.webDavConfig.value
+        webDavUrlDraft = cfg.url
+        webDavUserDraft = cfg.username
+        webDavPasswordDraft = cfg.password
+        webDavDirDraft = cfg.remoteDir
+    }
+
+    // ---- 树脂提醒（2026-09-22 新增）----
+    val reminderConfig by viewModel.reminderConfig.collectAsState()
+    // 滑杆草稿：拖动中只改本地状态，松手才落库，避免拖动过程高频写 DataStore
+    var reminderResinDraft by remember { mutableStateOf(reminderConfig.resinThreshold.toFloat()) }
+    var reminderCoinDraft by remember { mutableStateOf(reminderConfig.homeCoinThreshold.toFloat()) }
+    LaunchedEffect(reminderConfig.resinThreshold) {
+        reminderResinDraft = reminderConfig.resinThreshold.toFloat()
+    }
+    LaunchedEffect(reminderConfig.homeCoinThreshold) {
+        reminderCoinDraft = reminderConfig.homeCoinThreshold.toFloat()
+    }
+    // Android 13+ 通知权限：开启提醒时才需要（未授权时提醒只能静默失败）
+    val settingsContext = LocalContext.current
+    val reminderPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* 授权结果不阻塞开关流程 */ }
+    val requestReminderPermissionIfNeeded = {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                settingsContext, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            reminderPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     // 抽卡数据导入文件选择器
     val gachaDataPickerLauncher = rememberLauncherForActivityResult(
@@ -188,6 +241,224 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             ) {
                 Text("清除所有抽卡数据")
             }
+        }
+
+        // 树脂 / 洞天宝钱阈值提醒（2026-09-22 新增）
+        SettingsSection(title = "树脂提醒") {
+            Text(
+                text = "自定义树脂达到多少后提醒，不必只等回满。到达时刻由便笺快照 + 恢复速率" +
+                    "本地推算，交给系统闹钟触发，App 被划掉也能按时响。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "开启提醒")
+                    Text(
+                        text = "达到阈值时发系统通知",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = reminderConfig.enabled,
+                    onCheckedChange = {
+                        viewModel.setReminderEnabled(it)
+                        if (it) requestReminderPermissionIfNeeded()
+                    }
+                )
+            }
+
+            if (reminderConfig.enabled) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "树脂阈值：${reminderResinDraft.toInt()}",
+                    fontWeight = FontWeight.Bold
+                )
+                Slider(
+                    value = reminderResinDraft,
+                    onValueChange = { reminderResinDraft = it },
+                    onValueChangeFinished = {
+                        viewModel.setResinThreshold(reminderResinDraft.toInt())
+                    },
+                    valueRange = 1f..ReminderConfig.DEFAULT_RESIN_MAX.toFloat()
+                )
+                Text(
+                    text = "上限 ${ReminderConfig.DEFAULT_RESIN_MAX}（设到上限即回满提醒）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "同时提醒洞天宝钱")
+                    }
+                    Switch(
+                        checked = reminderConfig.homeCoinEnabled,
+                        onCheckedChange = { viewModel.setHomeCoinEnabled(it) }
+                    )
+                }
+                if (reminderConfig.homeCoinEnabled) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "洞天宝钱阈值：${reminderCoinDraft.toInt()}",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Slider(
+                        value = reminderCoinDraft,
+                        onValueChange = { reminderCoinDraft = it },
+                        onValueChangeFinished = {
+                            viewModel.setHomeCoinThreshold(reminderCoinDraft.toInt())
+                        },
+                        valueRange = 1f..ReminderConfig.DEFAULT_HOME_COIN_MAX.toFloat()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "每天只提醒一次")
+                        Text(
+                            text = "关闭后每次达到阈值都会提醒（10 分钟内不重复）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = reminderConfig.oncePerDay,
+                        onCheckedChange = { viewModel.setReminderOncePerDay(it) }
+                    )
+                }
+            }
+        }
+
+        // WebDAV 备份（2026-09-21 新增）
+        SettingsSection(title = "WebDAV 备份") {
+            Text(
+                text = "把抽卡记录备份到自己的 WebDAV（坚果云 / Nextcloud / 群晖 / Alist 等）。" +
+                    "开启后，每次成功获取最新抽卡记录都会自动备份一次。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "同步后自动备份")
+                    Text(
+                        text = "每次获取最新抽卡记录后自动上传",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = webDavConfig.enabled,
+                    onCheckedChange = { viewModel.setWebDavEnabled(it) }
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = webDavUrlDraft,
+                onValueChange = {
+                    webDavUrlDraft = it
+                    viewModel.setWebDavUrl(it)
+                },
+                label = { Text("服务器地址") },
+                placeholder = { Text("https://dav.jianguoyun.com/dav/") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = webDavUserDraft,
+                onValueChange = {
+                    webDavUserDraft = it
+                    viewModel.setWebDavUsername(it)
+                },
+                label = { Text("账号") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = webDavPasswordDraft,
+                onValueChange = {
+                    webDavPasswordDraft = it
+                    viewModel.setWebDavPassword(it)
+                },
+                label = { Text("密码 / 应用授权码") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = webDavDirDraft,
+                onValueChange = {
+                    webDavDirDraft = it
+                    viewModel.setWebDavRemoteDir(it)
+                },
+                label = { Text("远端目录") },
+                placeholder = { Text("/GenshinGachaHelper") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = "提示：Nextcloud / 坚果云需在网页端生成「应用密码」；局域网 http 地址也支持。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { viewModel.testWebDavConnection() },
+                    enabled = !webDavBusy,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("测试连接")
+                }
+                OutlinedButton(
+                    onClick = { viewModel.backupNowByWebDav() },
+                    enabled = !webDavBusy && uiState.hasData,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (webDavBusy) "处理中…" else "立即备份")
+                }
+            }
+
+            webDavMessage?.let { message ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (message.startsWith("失败")) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = if (webDavConfig.lastBackupTime > 0) {
+                    "上次备份：${formatBackupTime(webDavConfig.lastBackupTime)}" +
+                        if (webDavConfig.lastBackupStatus.isNotBlank())
+                            " · ${webDavConfig.lastBackupStatus}" else ""
+                } else {
+                    "尚未备份"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         // 关于（2026-09-20 新增：版本信息 + 测试期诊断用的日志导出入口，
@@ -345,3 +616,10 @@ fun ConfirmDialog(
         }
     )
 }
+
+/**
+ * WebDAV 上次备份时间的展示格式化（2026-09-21 新增）
+ */
+private fun formatBackupTime(timestamp: Long): String =
+    java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(timestamp))

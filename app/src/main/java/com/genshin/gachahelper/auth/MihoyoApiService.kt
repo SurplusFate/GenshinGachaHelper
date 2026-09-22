@@ -811,8 +811,203 @@ data class DailyNoteData(
     /** 本次数据拉取时刻（用于倒计时本地推算，避免每秒请求服务器） */
     val fetchedAt: Long = System.currentTimeMillis()
 ) {
+    companion object {
+        /** 树脂恢复速率：8 分钟 / 点（原神固定值，接口只给相位不给速率） */
+        const val RESIN_SECONDS_PER_POINT = 480L
+
+        /** 洞天宝钱恢复速率：1 小时 / 个（原神固定值） */
+        const val HOME_COIN_SECONDS_PER_POINT = 3600L
+    }
+
     val resinFull: Boolean get() = currentResin >= maxResin
     val homeCoinFull: Boolean get() = currentHomeCoin >= maxHomeCoin
+
+    /**
+     * [now] 时刻的树脂状态（纯本地推算，不请求服务器）。
+     *
+     * 每天只在首次启动时拉取一次快照，之后数值增长与倒计时全部由本方法
+     * 基于快照 + 本地时钟外推，UI 每秒调用一次即可实现"自动更新"。
+     */
+    fun resinAt(now: Long = System.currentTimeMillis()): ResourceProjection =
+        project(
+            current = currentResin,
+            max = maxResin,
+            recoverySeconds = resinRecoverySeconds,
+            secondsPerPoint = RESIN_SECONDS_PER_POINT,
+            now = now
+        )
+
+    /** [now] 时刻的洞天宝钱状态（纯本地推算，不请求服务器） */
+    fun homeCoinAt(now: Long = System.currentTimeMillis()): ResourceProjection =
+        project(
+            current = currentHomeCoin,
+            max = maxHomeCoin,
+            recoverySeconds = homeCoinRecoverySeconds,
+            secondsPerPoint = HOME_COIN_SECONDS_PER_POINT,
+            now = now
+        )
+
+    /**
+     * 快照时刻起算的「距下一点恢复」剩余秒数（归一化口径与 [project] 一致）。
+     *
+     * 阈值提醒要算"还有多久涨到目标值"，必须与界面外推同源，
+     * 否则会出现"界面已到 120、提醒却晚几分钟"的错位。
+     */
+    fun resinNextPointInSeconds(): Long =
+        normalizeNextPoint(resinRecoverySeconds, RESIN_SECONDS_PER_POINT, currentResin, maxResin)
+
+    /** 洞天宝钱快照时刻起算的「距下一点恢复」剩余秒数 */
+    fun homeCoinNextPointInSeconds(): Long =
+        normalizeNextPoint(homeCoinRecoverySeconds, HOME_COIN_SECONDS_PER_POINT, currentHomeCoin, maxHomeCoin)
+
+    /**
+     * 树脂推算值首次达到 [threshold] 的时刻（毫秒时间戳）。
+     *
+     * @return null 表示阈值不合法（≤0 或超过上限）、或已满且阈值更高；
+     *         当前值已达标时返回 [now]（由调用方决定是否立即提醒）。
+     */
+    fun resinReachAt(threshold: Int, now: Long = System.currentTimeMillis()): Long? =
+        reachAt(
+            current = currentResin,
+            max = maxResin,
+            nextPointInSeconds = resinNextPointInSeconds(),
+            secondsPerPoint = RESIN_SECONDS_PER_POINT,
+            threshold = threshold,
+            now = now
+        )
+
+    /** 洞天宝钱推算值首次达到 [threshold] 的时刻（毫秒时间戳） */
+    fun homeCoinReachAt(threshold: Int, now: Long = System.currentTimeMillis()): Long? =
+        reachAt(
+            current = currentHomeCoin,
+            max = maxHomeCoin,
+            nextPointInSeconds = homeCoinNextPointInSeconds(),
+            secondsPerPoint = HOME_COIN_SECONDS_PER_POINT,
+            threshold = threshold,
+            now = now
+        )
+
+    private fun reachAt(
+        current: Int,
+        max: Int,
+        nextPointInSeconds: Long,
+        secondsPerPoint: Long,
+        threshold: Int,
+        now: Long
+    ): Long? {
+        if (threshold <= 0 || threshold > max) return null
+        // 已达标（含已满）：立即视为到点，是否真的提醒交给调用方的每日/防抖策略
+        if (current >= threshold) return now
+        if (current >= max) return null
+        val periodMs = secondsPerPoint * 1000L
+        val nextPointAt = fetchedAt + nextPointInSeconds * 1000L
+        // 从 current 涨到 threshold 共 (threshold - current) 点，其中第 1 点即"下一点"，
+        // 其余按固定单点周期顺延
+        return nextPointAt + (threshold - current - 1) * periodMs
+    }
+
+    /**
+     * 服务端 recovery 字段语义归一化（口径说明见 [project]）：
+     * 统一为"距下一点恢复的剩余秒数"，并夹取到单点周期内。
+     */
+    private fun normalizeNextPoint(
+        recoverySeconds: Long,
+        secondsPerPoint: Long,
+        current: Int,
+        max: Int
+    ): Long {
+        if (current >= max) return 0L
+        val pointsToFull = (max - current - 1).coerceAtLeast(0)
+        val beforeLastPoint = pointsToFull * secondsPerPoint
+        val rawNext = if (recoverySeconds > beforeLastPoint) {
+            // 服务端给的是「距回满」
+            recoverySeconds - beforeLastPoint
+        } else {
+            // 服务端给的是「距下一点」
+            recoverySeconds
+        }
+        // 兜底夹取到单点周期内，抵御服务端给 0 / 异常大值造成的跳变
+        return rawNext.coerceIn(0L, secondsPerPoint)
+    }
+
+    /**
+     * 按固定单点速率外推当前值 / 距下一点 / 距回满。
+     *
+     * 服务端 recovery_time 字段语义在不同端点与版本间并不统一：既可能是
+     * 「距下一点恢复的秒数」（≤ 单点周期），也可能是「距回满的秒数」。
+     * 这里以未满时理论上「除最后一点外的回满耗时」(max-current-1)*rate
+     * 作为分界做自适应识别，两种语义都能算对，避免换端点后倒计时翻倍或缩水。
+     */
+    private fun project(
+        current: Int,
+        max: Int,
+        recoverySeconds: Long,
+        secondsPerPoint: Long,
+        now: Long
+    ): ResourceProjection {
+        if (current >= max) {
+            return ResourceProjection(
+                value = max,
+                max = max,
+                nextPointInSeconds = 0L,
+                fullInSeconds = 0L
+            )
+        }
+
+        // 单位统一：fetchedAt / now 是毫秒时间戳，而接口给的 recoverySeconds 与
+        // 单点速率 secondsPerPoint 都是「秒」。2026-09-21 修复：此前把秒直接加到
+        // 毫秒时间戳上参与运算，导致外推速度被放大 1000 倍
+        // （树脂每 0.48 秒 +1 点、宝钱每 3.6 秒 +1 个，打开首页很快显示满值），
+        // 这里全部换算成毫秒再运算。
+        val periodMs = secondsPerPoint * 1000L
+        val nextPointInSeconds = normalizeNextPoint(recoverySeconds, secondsPerPoint, current, max)
+        val nextPointAt = fetchedAt + nextPointInSeconds * 1000L
+
+        val gained = if (now >= nextPointAt) {
+            (now - nextPointAt) / periodMs + 1L
+        } else {
+            0L
+        }
+        val value = (current + gained).coerceAtMost(max.toLong()).toInt()
+
+        // 距下一点：走过整周期后要按周期取余回绕，不能一直钳在 0
+        val nextIn = if (value >= max) {
+            0L
+        } else {
+            val rem = ((now - nextPointAt) % periodMs + periodMs) % periodMs
+            periodMs - rem
+        }
+        // 距回满：先补满"下一点"，其余按整周期顺延（(max-current-1) 个周期）
+        val pointsToFull = (max - current - 1).coerceAtLeast(0)
+        val fullIn = if (value >= max) {
+            0L
+        } else {
+            (nextPointAt + pointsToFull * periodMs - now).coerceAtLeast(0L)
+        }
+        return ResourceProjection(
+            value = value,
+            max = max,
+            nextPointInSeconds = nextIn,
+            fullInSeconds = fullIn
+        )
+    }
+}
+
+/**
+ * 单项资源的本地推算结果（由 [DailyNoteData] 快照 + 本地时钟外推得到）
+ *
+ * @param value              推算出的当前值
+ * @param max                上限
+ * @param nextPointInSeconds 距下一点恢复的剩余秒数（已满时为 0）
+ * @param fullInSeconds      距回满的剩余秒数（已满时为 0）
+ */
+data class ResourceProjection(
+    val value: Int,
+    val max: Int,
+    val nextPointInSeconds: Long,
+    val fullInSeconds: Long
+) {
+    val isFull: Boolean get() = value >= max
 }
 
 /**
@@ -988,7 +1183,7 @@ class DailyNoteService @Inject constructor(
             ApiResult.Success(
                 DailyNoteData(
                     currentResin = data.intOf("current_resin"),
-                    maxResin = data.intOf("max_resin", 160),
+                    maxResin = data.intOf("max_resin", 200),
                     resinRecoverySeconds = data.longOf("resin_recovery_time"),
                     currentHomeCoin = data.intOf("current_home_coin"),
                     maxHomeCoin = data.intOf("max_home_coin", 2400),

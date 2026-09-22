@@ -20,11 +20,21 @@
 
   这里仅对极验域名放行明文流量，其余域名仍强制 HTTPS，
   不降低主 App 的安全性。
+
+  ── 2026-09-21 变更：WebDAV 备份功能 ─────────────────────────────
+  新增的「WebDAV 抽卡记录备份」允许用户填写自建网盘地址
+  （群晖 / Alist / 威联通等局域网设备多为 http://192.168.x.x:端口）。
+  这类地址无法预先枚举域名，故把 base-config 的
+  cleartextTrafficPermitted 由 false 调整为 true，
+  以保证局域网 http 端点可用。
+  说明：该开关只是「允许」明文，App 自身所有既有请求
+  （米游社 API 等）仍全部使用 HTTPS，不会自动发起明文请求；
+  设置页也明确提示公网地址建议使用 HTTPS。
   ──────────────────────────────────────────────────────────────
 -->
 <network-security-config>
-    <!-- 默认：强制 HTTPS，与 usesCleartextTraffic="false" 语义一致 -->
-    <base-config cleartextTrafficPermitted="false">
+    <!-- 默认：允许明文（仅为兼容用户自建的局域网 WebDAV 服务） -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

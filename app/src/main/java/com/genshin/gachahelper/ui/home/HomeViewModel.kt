@@ -1,5 +1,9 @@
 package com.genshin.gachahelper.ui.home
 
+import android.content.Context
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.genshin.gachahelper.analysis.GachaReport
@@ -14,25 +18,34 @@ import com.genshin.gachahelper.auth.DailyNoteService
 import com.genshin.gachahelper.auth.GeetestResult
 import com.genshin.gachahelper.auth.VerificationService
 import com.genshin.gachahelper.auth.asStringSafe
+import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.local.entity.GachaRecordEntity
 import com.genshin.gachahelper.data.model.GachaType
 import com.genshin.gachahelper.data.repository.GachaRepository
+import com.genshin.gachahelper.reminder.ReminderConfig
+import com.genshin.gachahelper.reminder.ResinReminderManager
+import com.genshin.gachahelper.reminder.ResinReminderStore
 import com.genshin.gachahelper.sync.GachaSyncService
 import com.genshin.gachahelper.sync.SyncState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 import javax.inject.Inject
+import javax.inject.Singleton
 
 data class HomeUiState(
     val isLoggedIn: Boolean = false,
@@ -70,8 +83,13 @@ class HomeViewModel @Inject constructor(
     private val statsCalculator: GachaStatsCalculator,
     private val syncService: GachaSyncService,
     private val dailyNoteService: DailyNoteService,
+    /** 便笺快照本地持久化：每天只在首次启动拉一次网络，其余时间读本地快照推算 */
+    private val dailyNoteRepository: DailyNoteRepository,
     private val verificationService: VerificationService,
     private val sessionEventBus: SessionEventBus,
+    // 2026-09-22：树脂/洞天宝钱阈值提醒（规则主体在设置页，卡片只放快捷入口）
+    private val reminderStore: ResinReminderStore,
+    private val reminderManager: ResinReminderManager,
     // 2026-09-20：米游社签到入口从设置页迁到便笺页（用户需求"把自动签到放到便笺来"）
     private val signInRepository: com.genshin.gachahelper.signin.SignInRepository,
     // 极验预检用：verifyVerification 失败时直接调 validate.php 裁决 validate 真伪
@@ -79,8 +97,17 @@ class HomeViewModel @Inject constructor(
 ) : ViewModel() {
 
     companion object {
-        /** 每日便笺节流窗口：接口有频率限制，60 秒内不重复请求 */
+        /**
+         * 每日便笺重复请求保护窗口：接口有频率限制，60 秒内不重复发起网络请求。
+         *
+         * 常态展示不依赖本窗口——便笺每个自然日只在首次启动时同步一次快照，
+         * 其余时间由 [DailyNoteData.resinAt] / [DailyNoteData.homeCoinAt]
+         * 基于快照与本地时钟外推（详见 [loadDailyNote]）。
+         */
         private const val DAILY_NOTE_TTL_MS = 60_000L
+
+        /** 跨天巡检间隔：进程常驻跨过 0 点时也能补上当日同步 */
+        private const val DAILY_NOTE_DAY_WATCH_MS = 5 * 60_000L
 
         /** 1034 自动弹验证的次数上限：防止 token 异常时的弹窗循环，超出后仅手动触发 */
         private const val MAX_AUTO_CAPTCHA = 2
@@ -121,6 +148,36 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    // ------------------------------------------------------------------
+    // 树脂 / 洞天宝钱阈值提醒（2026-09-22 新增）
+    // ------------------------------------------------------------------
+
+    /** 提醒配置：便笺卡片的快捷入口与设置页读写同一份持久化数据 */
+    val reminderConfig: StateFlow<ReminderConfig> = reminderStore.configFlow.stateIn(
+        scope = viewModelScope,
+        started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+        initialValue = ReminderConfig()
+    )
+
+    fun setReminderEnabled(enabled: Boolean) = updateReminder { it.copy(enabled = enabled) }
+
+    fun setResinThreshold(threshold: Int) = updateReminder {
+        it.copy(resinThreshold = threshold.coerceIn(1, ReminderConfig.DEFAULT_RESIN_MAX))
+    }
+
+    fun setHomeCoinEnabled(enabled: Boolean) = updateReminder { it.copy(homeCoinEnabled = enabled) }
+
+    fun setHomeCoinThreshold(threshold: Int) = updateReminder {
+        it.copy(homeCoinThreshold = threshold.coerceIn(1, ReminderConfig.DEFAULT_HOME_COIN_MAX))
+    }
+
+    fun setReminderOncePerDay(oncePerDay: Boolean) = updateReminder { it.copy(oncePerDay = oncePerDay) }
+
+    /** 落库 + 立即重排闹钟（统一走 manager，避免两处逻辑不一致） */
+    private fun updateReminder(transform: (ReminderConfig) -> ReminderConfig) {
+        viewModelScope.launch { reminderManager.update(transform) }
+    }
+
     // 串行化 loadData，避免事件并发触发时多个加载重叠写 _uiState 造成 last-write-wins 回退
     private val loadMutex = Mutex()
 
@@ -146,14 +203,32 @@ class HomeViewModel @Inject constructor(
                     SessionEvent.LogoutCompleted,
                     SessionEvent.DataCleared -> {
                         _uiState.value = HomeUiState(isLoading = false)
-                        // 退出登录后立即失效便笺节流窗口，重新登录时能立刻拉取
+                        // 退出登录后立即失效便笺节流窗口，并清掉本地快照，
+                        // 避免换号 / 退出后仍按上一个账号的数据继续本地推算
                         lastDailyNoteFetchAt = 0L
+                        dailyNoteRepository.clear()
+                        // 清掉挂在旧账号快照上的提醒闹钟，避免退出后仍弹树脂提醒
+                        reminderManager.cancel()
                     }
                 }
             }
         }
 
         loadData()
+
+        // 跨天巡检：进程常驻（长期不冷启动）跨过 0 点后，补一次当日同步。
+        // 仅在"本地快照非今日"时才会真正发起网络请求，其余周期只读一次本地快照。
+        viewModelScope.launch {
+            while (true) {
+                delay(DAILY_NOTE_DAY_WATCH_MS)
+                val uid = authRepository.getUid()
+                if (!authRepository.isLoggedIn() || uid.isNullOrBlank()) continue
+                val cached = dailyNoteRepository.load(uid)
+                if (cached == null || !DailyNoteRepository.isSameLocalDay(cached.fetchedAt)) {
+                    loadDailyNote(force = false)
+                }
+            }
+        }
     }
 
     fun loadData() {
@@ -197,7 +272,8 @@ class HomeViewModel @Inject constructor(
                     )
                 }
 
-                // 便笺（树脂/洞天宝钱）：登录态确认后再拉取，内部自带登录校验 + 60s 节流。
+                // 便笺（树脂/洞天宝钱）：登录态确认后再调用。内部会判断本地快照是否为
+                // "今天"——是则纯本地读取（零网络），否则同步一次快照。
                 // 缺了这一步会导致首次进入首页 dailyNote/dailyNoteError 均为 null，卡片永不展示。
                 loadDailyNote(force = false)
             }
@@ -349,28 +425,69 @@ class HomeViewModel @Inject constructor(
     /**
      * 刷新每日便笺（树脂 / 洞天宝钱）。
      *
-     * @param force 用户主动点击刷新时传 true，跳过节流窗口；页面自动刷新走节流。
+     * @param force 用户主动点击刷新时传 true，跳过"当天已同步"判断与节流窗口，
+     *              强制走一次网络请求；页面自动刷新走默认的本地优先路径。
      */
     fun refreshDailyNote(force: Boolean = false) {
         viewModelScope.launch { loadDailyNote(force) }
     }
 
+    /**
+     * 每日便笺加载：每个自然日只在首次启动时同步一次快照，其余时间纯本地推算。
+     *
+     * 流程：
+     * 1. 读取本地快照（按 UID 隔离，换号不会串数据）；
+     * 2. 快照属于"今天" → 直接灌入 UI，零网络请求。之后数值的增长与倒计时由
+     *    [DailyNoteData.resinAt] / [DailyNoteData.homeCoinAt] 按固定恢复速率
+     *    本地外推（树脂 8 分钟/点、洞天宝钱 1 小时/个），每秒刷新一次即可；
+     * 3. 快照缺失或已跨天 → 走一次网络同步并落盘，作为当天推算的新锚点；
+     * 4. 网络失败 → 保留上次成功数据 / 展示错误与验证入口，不静默清空卡片。
+     *
+     * @param force 用户手动刷新、或 1034 验证成功后的强刷：忽略"当天已同步"判断。
+     */
     private suspend fun loadDailyNote(force: Boolean) {
         // 未登录没有有效 Cookie，接口必然失败，直接跳过（首页此时不会展示该卡片）
         if (!authRepository.isLoggedIn()) return
-        if (authRepository.getUid().isNullOrBlank()) return
-        if (!force && System.currentTimeMillis() - lastDailyNoteFetchAt < DAILY_NOTE_TTL_MS) return
+        val uid = authRepository.getUid()?.takeIf { it.isNotBlank() } ?: return
 
-        lastDailyNoteFetchAt = System.currentTimeMillis()
-        _uiState.value = _uiState.value.copy(dailyNoteLoading = true)
+        val now = System.currentTimeMillis()
+        val cached = dailyNoteRepository.load(uid)
+        val cachedIsToday = cached != null &&
+            DailyNoteRepository.isSameLocalDay(cached.fetchedAt, now)
 
-        when (val result = dailyNoteService.fetchDailyNote()) {
-            is ApiResult.Success -> _uiState.value = _uiState.value.copy(
-                dailyNote = result.data,
+        // 本地已有"今天"的快照：只更新 UI，不触碰网络——这就是"每天只拉一次"的落点
+        if (!force && cachedIsToday) {
+            lastDailyNoteFetchAt = now
+            _uiState.value = _uiState.value.copy(
+                dailyNote = cached,
                 dailyNoteError = null,
                 dailyNoteErrorCode = null,
                 dailyNoteLoading = false
             )
+            // 每次拿到（或读到）快照都按最新锚点重排阈值提醒的闹钟，
+            // 保证"预计到达时刻"跟着最新数据走
+            reminderManager.reschedule()
+            return
+        }
+
+        // 需要联网时的重复请求保护：跨天补拉失败后不至于高频重试
+        if (!force && now - lastDailyNoteFetchAt < DAILY_NOTE_TTL_MS) return
+        lastDailyNoteFetchAt = now
+        _uiState.value = _uiState.value.copy(dailyNoteLoading = true)
+
+        when (val result = dailyNoteService.fetchDailyNote()) {
+            is ApiResult.Success -> {
+                // 落盘作为当天推算的锚点：本次启动之后的数值增长全部由本地外推
+                dailyNoteRepository.save(uid, result.data)
+                // 新快照落地后按最新锚点重排阈值提醒
+                reminderManager.reschedule()
+                _uiState.value = _uiState.value.copy(
+                    dailyNote = result.data,
+                    dailyNoteError = null,
+                    dailyNoteErrorCode = null,
+                    dailyNoteLoading = false
+                )
+            }
 
             is ApiResult.Error -> {
                 _uiState.value = _uiState.value.copy(
@@ -614,4 +731,72 @@ class HomeViewModel @Inject constructor(
     // requestShareLogFile / copyLogToClipboard / revealLogPathInClipboard
     // 五方法已整体迁至 SettingsViewModel——日志导出入口从首页右上角
     // 挪到「设置 → 关于」区块（appLog 注入同步移除）。
+}
+
+/**
+ * 每日便笺快照的本地持久化。
+ *
+ * 便笺接口有频率限制与风控（1034/5003），因此改为"每个自然日只同步一次、
+ * 其余时间本地推算"：快照以 JSON 存在独立的 DataStore 里，并记录归属 UID；
+ * UID 不匹配（换号、重新登录）时视为无快照，避免拿别的账号的数据继续推算。
+ */
+private val Context.dailyNoteStore by preferencesDataStore(name = "daily_note_store")
+
+@Singleton
+class DailyNoteRepository @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
+    companion object {
+        private val KEY_SNAPSHOT = stringPreferencesKey("snapshot_json")
+
+        /**
+         * 两个时间戳是否落在同一个自然日（本地时区，0 点切换）。
+         *
+         * 采用自然日而非"间隔 24 小时"，与用户直觉一致：每天 0 点后首次
+         * 启动即同步一次当日数据。
+         */
+        fun isSameLocalDay(first: Long, second: Long = System.currentTimeMillis()): Boolean {
+            val a = Calendar.getInstance().apply { timeInMillis = first }
+            val b = Calendar.getInstance().apply { timeInMillis = second }
+            return a.get(Calendar.YEAR) == b.get(Calendar.YEAR) &&
+                a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+        }
+    }
+
+    /** 落盘结构：归属 UID + 快照本体（Gson 序列化，字段随 DailyNoteData 演进） */
+    private data class Snapshot(val uid: String, val data: DailyNoteData)
+
+    private val gson = Gson()
+
+    /** 读取 [uid] 对应的本地快照；无快照或归属不符时返回 null */
+    suspend fun load(uid: String): DailyNoteData? = withContext(Dispatchers.IO) {
+        val raw = context.dailyNoteStore.data.first()[KEY_SNAPSHOT] ?: return@withContext null
+        runCatching { gson.fromJson(raw, Snapshot::class.java) }
+            .getOrNull()
+            ?.takeIf { it.uid == uid }
+            ?.data
+    }
+
+    /** 写入快照（覆盖式，正常情况下一天一次） */
+    suspend fun save(uid: String, data: DailyNoteData) = withContext(Dispatchers.IO) {
+        val json = gson.toJson(Snapshot(uid, data))
+        context.dailyNoteStore.edit { it[KEY_SNAPSHOT] = json }
+    }
+
+    /**
+     * 读取最近一次快照，不校验归属。
+     *
+     * 供阈值提醒调度使用：闹钟到点时进程可能是被系统刚拉起的，
+     * 此时只需要"当前锚点"来判定是否达标，不关心当时登录的是哪个号
+     * （换号/退出时会由调用方清理并取消提醒）。
+     */
+    suspend fun loadLatest(): DailyNoteData? = withContext(Dispatchers.IO) {
+        val raw = context.dailyNoteStore.data.first()[KEY_SNAPSHOT] ?: return@withContext null
+        runCatching { gson.fromJson(raw, Snapshot::class.java) }.getOrNull()?.data
+    }
+
+    /** 清空快照：退出登录 / 清空数据时调用 */
+    suspend fun clear() = withContext(Dispatchers.IO) {
+        context.dailyNoteStore.edit { it.remove(KEY_SNAPSHOT) }
+    }
 }
