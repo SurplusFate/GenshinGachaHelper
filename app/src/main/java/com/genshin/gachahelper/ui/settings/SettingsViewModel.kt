@@ -25,6 +25,8 @@ import com.genshin.gachahelper.ui.theme.ThemeMode
 import com.genshin.gachahelper.ui.theme.ThemeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +34,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/** 提醒自检去抖窗口：合并滑杆松手 / 连点开关的连续变更，避免高频跨进程查询（2026-09-23） */
+private const val REMINDER_DIAGNOSTICS_DEBOUNCE_MS = 120L
 
 data class SettingsUiState(
     val isLoggedIn: Boolean = false,
@@ -142,10 +147,9 @@ class SettingsViewModel @Inject constructor(
 
     /** 落库后立即按新阈值重排闹钟（关闭开关时 [ResinReminderManager.reschedule] 内部会先取消） */
     private fun updateReminder(transform: (ReminderConfig) -> ReminderConfig) {
-        viewModelScope.launch {
-            reminderManager.update(transform)
-            refreshReminderDiagnostics()
-        }
+        // 2026-09-23 性能：这里不再顺带刷自检面板——自检由下面的 configFlow 去抖统一刷新，
+        // 否则一次改动会触发两轮「权限 / 渠道 / 精确闹钟 / 电池优化」跨进程查询。
+        viewModelScope.launch { reminderManager.update(transform) }
     }
 
     // ------------------------------------------------------------------
@@ -308,6 +312,23 @@ class SettingsViewModel @Inject constructor(
     }
 
     init {
+        // 提醒自检：进页面先检测一次；此后配置变更 → 去抖 120ms 再检测。
+        // 去抖用于合并"拖动滑杆松手 / 连点开关"产生的多次变更：每次检测都要读
+        // DataStore 并跨进程查询通知权限、渠道、精确闹钟、电池优化，不宜高频。
+        // 2026-09-23 性能：原先由界面侧 LaunchedEffect + updateReminder 双路触发，
+        // 一次改动检测两遍，且都在主线程上做跨进程查询，是设置页卡顿的来源之一。
+        viewModelScope.launch {
+            var pending: Job? = null
+            reminderStore.configFlow.collect {
+                pending?.cancel()
+                pending = launch {
+                    delay(REMINDER_DIAGNOSTICS_DEBOUNCE_MS)
+                    _reminderDiagnostics.value = reminderManager.diagnostics()
+                }
+            }
+        }
+        refreshReminderDiagnostics()
+
         // 监听全局会话事件：登录/退出/导入/清除后需重新 loadSettings
         viewModelScope.launch {
             sessionEventBus.events.collect { event ->

@@ -27,6 +27,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -373,22 +374,26 @@ class ResinReminderManager @Inject constructor(
      * force-stop / 电池优化清掉了闹钟，这里看不出来，需要靠"实际没响"来暴露。
      */
     suspend fun diagnostics(): ReminderDiagnostics {
-        val config = store.current()
-        val note = dailyNoteRepository.loadLatest()
-        val alarmManager = context.getSystemService(AlarmManager::class.java)
-        val powerManager = context.getSystemService(PowerManager::class.java)
-        return ReminderDiagnostics(
-            enabled = config.enabled,
-            notificationPermissionGranted = ResinReminderNotifier.hasPermission(context),
-            channelEnabled = ResinReminderNotifier.isChannelEnabled(context),
-            exactAlarmAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                (alarmManager?.canScheduleExactAlarms() ?: false),
-            batteryOptimizationIgnored =
-                powerManager?.isIgnoringBatteryOptimizations(context.packageName) ?: true,
-            hasSnapshot = note != null,
-            snapshotAt = note?.fetchedAt ?: 0L,
-            nextTriggerAt = store.nextTriggerAt()
-        )
+        // 2026-09-23 性能：检测要读 DataStore 快照 + 跨进程查通知/闹钟/电池优化状态，
+        // 全部挪到 IO 线程，避免在设置页拖动滑杆时占住主线程。
+        return withContext(Dispatchers.IO) {
+            val config = store.current()
+            val note = dailyNoteRepository.loadLatest()
+            val alarmManager = context.getSystemService(AlarmManager::class.java)
+            val powerManager = context.getSystemService(PowerManager::class.java)
+            ReminderDiagnostics(
+                enabled = config.enabled,
+                notificationPermissionGranted = ResinReminderNotifier.hasPermission(context),
+                channelEnabled = ResinReminderNotifier.isChannelEnabled(context),
+                exactAlarmAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                    (alarmManager?.canScheduleExactAlarms() ?: false),
+                batteryOptimizationIgnored =
+                    powerManager?.isIgnoringBatteryOptimizations(context.packageName) ?: true,
+                hasSnapshot = note != null,
+                snapshotAt = note?.fetchedAt ?: 0L,
+                nextTriggerAt = store.nextTriggerAt()
+            )
+        }
     }
 
     /** 设置页「发送测试通知」：仅验证通知链路，不改动提醒状态与去重标记 */
