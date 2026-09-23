@@ -15,6 +15,7 @@ import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
 import com.genshin.gachahelper.data.repository.GachaRepository
 import com.genshin.gachahelper.reminder.ReminderConfig
+import com.genshin.gachahelper.reminder.ReminderDiagnostics
 import com.genshin.gachahelper.reminder.ResinReminderManager
 import com.genshin.gachahelper.reminder.ResinReminderStore
 import com.genshin.gachahelper.signin.SignInRepository
@@ -141,7 +142,39 @@ class SettingsViewModel @Inject constructor(
 
     /** 落库后立即按新阈值重排闹钟（关闭开关时 [ResinReminderManager.reschedule] 内部会先取消） */
     private fun updateReminder(transform: (ReminderConfig) -> ReminderConfig) {
-        viewModelScope.launch { reminderManager.update(transform) }
+        viewModelScope.launch {
+            reminderManager.update(transform)
+            refreshReminderDiagnostics()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 提醒自检（2026-09-23 新增）：把"为什么不响"变成可见状态
+    // ------------------------------------------------------------------
+
+    /** 权限 / 渠道 / 精确闹钟 / 电池优化 / 快照 / 已排提醒时刻 */
+    private val _reminderDiagnostics = MutableStateFlow<ReminderDiagnostics?>(null)
+    val reminderDiagnostics: StateFlow<ReminderDiagnostics?> = _reminderDiagnostics.asStateFlow()
+
+    /** 测试通知的即时反馈 */
+    private val _reminderTestMessage = MutableStateFlow<String?>(null)
+    val reminderTestMessage: StateFlow<String?> = _reminderTestMessage.asStateFlow()
+
+    fun refreshReminderDiagnostics() {
+        viewModelScope.launch { _reminderDiagnostics.value = reminderManager.diagnostics() }
+    }
+
+    /** 只发一条测试通知，验证「权限 → 渠道 → 发送」这条链路通不通 */
+    fun sendTestReminderNotification() {
+        viewModelScope.launch {
+            val ok = reminderManager.sendTestNotification()
+            _reminderTestMessage.value = if (ok) {
+                "测试通知已发送，请下拉通知栏确认"
+            } else {
+                "发送失败：通知权限未授予，或提醒渠道被系统关闭"
+            }
+            _reminderDiagnostics.value = reminderManager.diagnostics()
+        }
     }
 
     fun setWebDavEnabled(enabled: Boolean) {

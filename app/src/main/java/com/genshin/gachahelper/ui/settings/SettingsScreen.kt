@@ -1,5 +1,7 @@
 package com.genshin.gachahelper.ui.settings
 
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,6 +52,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.genshin.gachahelper.BuildConfig
 import com.genshin.gachahelper.auth.AppLog
 import com.genshin.gachahelper.reminder.ReminderConfig
+import com.genshin.gachahelper.reminder.ResinReminderNotifier
 import com.genshin.gachahelper.ui.dockContentBottomPadding
 import com.genshin.gachahelper.ui.GlassSurface
 import com.genshin.gachahelper.ui.logexport.LogExportDialog
@@ -109,6 +112,18 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         ) {
             reminderPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    // ---- 提醒自检（2026-09-23 新增）：权限 / 渠道 / 精确闹钟 / 电池优化 / 已排时刻 ----
+    val reminderDiagnostics by viewModel.reminderDiagnostics.collectAsState()
+    val reminderTestMessage by viewModel.reminderTestMessage.collectAsState()
+    LaunchedEffect(
+        reminderConfig.enabled,
+        reminderConfig.resinThreshold,
+        reminderConfig.homeCoinEnabled,
+        reminderConfig.homeCoinThreshold
+    ) {
+        viewModel.refreshReminderDiagnostics()
     }
 
     // 抽卡数据导入文件选择器
@@ -368,6 +383,94 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                         }
                     }
                 }
+            }
+        }
+
+        // 提醒自检（2026-09-23 新增）：把"为什么不响"逐环节摊开。
+        // 一次性闹钟会被系统的省电策略 / 划掉后台清掉，此前 App 完全静默，
+        // 用户无法判断是权限、渠道还是系统限制。
+        SettingsSection(title = "提醒自检") {
+            Text(
+                text = "判断「为什么没收到提醒」用。系统会在省电模式或划掉后台时清掉闹钟，" +
+                    "把本应用加入电池优化白名单，提醒才稳定。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val diagnostics = reminderDiagnostics
+            if (diagnostics == null) {
+                Text(
+                    text = "正在检测…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                ReminderCheckRow(
+                    title = "通知权限",
+                    ok = diagnostics.notificationPermissionGranted,
+                    hint = "Android 13+ 需允许通知，否则发送被静默丢弃",
+                    actionLabel = "去授权",
+                    onAction = { requestReminderPermissionIfNeeded() }
+                )
+                ReminderCheckRow(
+                    title = "通知渠道",
+                    ok = diagnostics.channelEnabled,
+                    hint = "「树脂提醒」渠道被系统关闭时通知不显示",
+                    actionLabel = "去开启",
+                    onAction = { openReminderChannelSettings(settingsContext) }
+                )
+                ReminderCheckRow(
+                    title = "精确闹钟",
+                    ok = diagnostics.exactAlarmAllowed,
+                    hint = "未授予时降级为不精确闹钟，提醒可能延迟",
+                    actionLabel = "去授权",
+                    onAction = { openExactAlarmSettings(settingsContext) }
+                )
+                ReminderCheckRow(
+                    title = "电池优化白名单",
+                    ok = diagnostics.batteryOptimizationIgnored,
+                    hint = "未加入时系统会限制后台闹钟（划掉后台即失效）",
+                    actionLabel = "去关闭",
+                    onAction = { requestIgnoreBatteryOptimization(settingsContext) }
+                )
+                ReminderCheckRow(
+                    title = "本地便笺数据",
+                    ok = diagnostics.hasSnapshot,
+                    hint = if (diagnostics.hasSnapshot) {
+                        "快照时间：${formatReminderTime(diagnostics.snapshotAt)}"
+                    } else {
+                        "无快照，无法推算提醒时刻（先登录并刷新一次便笺）"
+                    }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = if (diagnostics.nextTriggerAt > 0L) {
+                        "已排下次提醒：${formatReminderTime(diagnostics.nextTriggerAt)}"
+                    } else {
+                        "当前没有已排的提醒（开关关闭 / 无快照 / 已达阈值且今天已提醒）"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { viewModel.sendTestReminderNotification() }) {
+                    Text(text = "发送测试通知")
+                }
+                OutlinedButton(onClick = { viewModel.refreshReminderDiagnostics() }) {
+                    Text(text = "重新检测")
+                }
+            }
+            reminderTestMessage?.let { message ->
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -657,5 +760,77 @@ fun ConfirmDialog(
  * WebDAV 上次备份时间的展示格式化（2026-09-21 新增）
  */
 private fun formatBackupTime(timestamp: Long): String =
+    java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(timestamp))
+
+// ---------------------------------------------------------------------------
+// 提醒自检（2026-09-23 新增）
+// ---------------------------------------------------------------------------
+
+/**
+ * 提醒自检的单行：标题 + 说明 + 右侧状态（异常时给一个跳系统设置的入口）。
+ */
+@Composable
+private fun ReminderCheckRow(
+    title: String,
+    ok: Boolean,
+    hint: String,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title)
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (!ok && actionLabel != null && onAction != null) {
+            TextButton(onClick = onAction) { Text(text = actionLabel) }
+        } else {
+            Text(
+                text = if (ok) "正常" else "异常",
+                fontWeight = FontWeight.Bold,
+                color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+/** 跳「应用通知」系统设置页 */
+private fun openReminderChannelSettings(context: Context) {
+    val intent = Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, ResinReminderNotifier.CHANNEL_ID)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
+}
+
+/** 跳「闹钟和提醒」授权页（Android 12+ 才有该页面） */
+private fun openExactAlarmSettings(context: Context) {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
+    val intent = Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+        .setData(Uri.fromParts("package", context.packageName, null))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
+}
+
+/** 请求把本应用加入电池优化白名单（关闭电池优化） */
+private fun requestIgnoreBatteryOptimization(context: Context) {
+    val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+        .setData(Uri.parse("package:${context.packageName}"))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
+}
+
+/** 提醒时刻展示格式化 */
+private fun formatReminderTime(timestamp: Long): String =
     java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
         .format(java.util.Date(timestamp))

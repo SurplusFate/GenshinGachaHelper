@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 树脂/洞天宝钱阈值提醒：需要精确闹钟才能在预计时刻准点响（Android 12+ 可被系统收回，届时降级为非精确） -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- 提醒自检：引导用户关闭电池优化（不关闭时系统会清掉后台闹钟，表现为"到点不响"） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- 崩溃日志只写应用内部存储，不再需要外部存储写权限 -->
     <application

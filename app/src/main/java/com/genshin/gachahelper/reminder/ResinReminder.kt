@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -82,6 +83,33 @@ data class ReminderConfig(
 
 private val Context.resinReminderStore by preferencesDataStore(name = "resin_reminder_store")
 
+/**
+ * 提醒链路自检结果（2026-09-23 新增）。
+ *
+ * 起因：用户反馈"树脂满了没收到通知"，但通知权限、开关都正常——真实原因是
+ * AlarmManager 的一次性闹钟会被"划掉后台 / 电池优化"清掉，而 App 此前对此
+ * 完全静默。把这条链路上的每个环节都摊开给用户看，才能分辨是权限、渠道、
+ * 系统限制还是"没到点"。
+ */
+data class ReminderDiagnostics(
+    /** 提醒总开关 */
+    val enabled: Boolean = false,
+    /** Android 13+ 通知运行时权限 */
+    val notificationPermissionGranted: Boolean = false,
+    /** 提醒渠道未被系统关闭 */
+    val channelEnabled: Boolean = true,
+    /** 已获得精确闹钟权限（未获得时会降级为不精确闹钟） */
+    val exactAlarmAllowed: Boolean = true,
+    /** 已加入电池优化白名单（未加入时系统会限制后台闹钟） */
+    val batteryOptimizationIgnored: Boolean = false,
+    /** 本地是否有便笺快照（无快照则无法推算提醒时刻） */
+    val hasSnapshot: Boolean = false,
+    /** 快照时间 */
+    val snapshotAt: Long = 0L,
+    /** 已排入 AlarmManager 的下次提醒时刻，0 表示当前没有排程 */
+    val nextTriggerAt: Long = 0L
+)
+
 /** 提醒配置与"上次提醒时间"的持久化 */
 @Singleton
 class ResinReminderStore @Inject constructor(
@@ -96,6 +124,9 @@ class ResinReminderStore @Inject constructor(
         private val KEY_ONCE_PER_DAY = booleanPreferencesKey("once_per_day")
         private val KEY_LAST_RESIN_AT = longPreferencesKey("last_resin_notify_at")
         private val KEY_LAST_COIN_AT = longPreferencesKey("last_coin_notify_at")
+
+        /** 已排入 AlarmManager 的下一次提醒时刻，用于设置页「提醒自检」展示 */
+        private val KEY_NEXT_TRIGGER_AT = longPreferencesKey("next_trigger_at")
 
         const val RESIN = "resin"
         const val HOME_COIN = "home_coin"
@@ -141,6 +172,24 @@ class ResinReminderStore @Inject constructor(
     private fun lastKey(resource: String) =
         if (resource == HOME_COIN) KEY_LAST_COIN_AT else KEY_LAST_RESIN_AT
 
+    /** 已排入 AlarmManager 的下一次提醒时刻（毫秒），0 表示当前没有排程 */
+    suspend fun nextTriggerAt(): Long =
+        context.resinReminderStore.data.first()[KEY_NEXT_TRIGGER_AT] ?: 0L
+
+    suspend fun setNextTriggerAt(at: Long) {
+        context.resinReminderStore.edit { it[KEY_NEXT_TRIGGER_AT] = at }
+    }
+
+    /**
+     * 清除 [resource] 的「已提醒」标记。
+     *
+     * 去重是按资源（而非按阈值）记账的，阈值/开关一变就必须清一次，
+     * 否则会出现"今天按 120 提醒过 → 改成 200 后当天永不提醒"。
+     */
+    suspend fun clearNotified(resource: String) {
+        context.resinReminderStore.edit { prefs -> prefs.remove(lastKey(resource)) }
+    }
+
     /**
      * 今天是否已经提醒过 [resource]。
      *
@@ -155,9 +204,11 @@ class ResinReminderStore @Inject constructor(
 
 /** 提醒通知渠道与发送（独立渠道，用户可单独静音） */
 object ResinReminderNotifier {
-    private const val CHANNEL_ID = "resin_reminder"
+    /** 渠道 ID：设置页「提醒自检」跳转渠道设置时会用到，故对外可见 */
+    const val CHANNEL_ID = "resin_reminder"
     private const val RESIN_NOTIFICATION_ID = 2001
     private const val COIN_NOTIFICATION_ID = 2002
+    private const val TEST_NOTIFICATION_ID = 2003
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -171,24 +222,41 @@ object ResinReminderNotifier {
         manager.createNotificationChannel(channel)
     }
 
-    fun notifyResin(context: Context, current: Int, threshold: Int) {
+    fun notifyResin(context: Context, current: Int, threshold: Int): Boolean {
         val text = if (current >= threshold) {
             "树脂已达到 $current（阈值 $threshold），去清体力吧"
         } else {
             "树脂已达阈值 $threshold"
         }
-        send(context, RESIN_NOTIFICATION_ID, "树脂提醒", text)
+        return send(context, RESIN_NOTIFICATION_ID, "树脂提醒", text)
     }
 
-    fun notifyHomeCoin(context: Context, current: Int, threshold: Int) {
+    fun notifyHomeCoin(context: Context, current: Int, threshold: Int): Boolean =
         send(context, COIN_NOTIFICATION_ID, "洞天宝钱提醒", "洞天宝钱已达到 $current（阈值 $threshold），去收钱吧")
-    }
 
-    private fun send(context: Context, id: Int, title: String, text: String) {
-        val granted = ContextCompat.checkSelfPermission(
+    /**
+     * 设置页「发送测试通知」：直接把通知链路（权限 → 渠道 → 发送）跑通一次，
+     * 让用户/排查者立刻区分"链路坏了"还是"根本没到点"。
+     */
+    fun sendTest(context: Context): Boolean =
+        send(context, TEST_NOTIFICATION_ID, "树脂提醒测试", "看到这条通知说明提醒链路正常（权限、渠道、发送均可用）")
+
+    /** 通知权限是否已授予（Android 13+ 需运行时授权，未授权时通知会被系统丢弃） */
+    fun hasPermission(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(
             context, Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) return
+
+    /** 提醒渠道是否可用：渠道被用户在系统里关闭（importance=NONE）时通知不会显示 */
+    fun isChannelEnabled(context: Context): Boolean {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return false
+        val channel = manager.getNotificationChannel(CHANNEL_ID) ?: return true
+        return channel.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
+    private fun send(context: Context, id: Int, title: String, text: String): Boolean {
+        if (!hasPermission(context)) return false
+        if (!isChannelEnabled(context)) return false
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -197,10 +265,11 @@ object ResinReminderNotifier {
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .build()
-        try {
+        return try {
             NotificationManagerCompat.from(context).notify(id, notification)
+            true
         } catch (_: SecurityException) {
-            // 无通知权限时静默失败，不影响其他逻辑
+            false
         }
     }
 }
@@ -233,7 +302,19 @@ class ResinReminderManager @Inject constructor(
      * 避免两处各写一套"落库 + 排程"逻辑。
      */
     suspend fun update(transform: (ReminderConfig) -> ReminderConfig) {
-        store.save(transform(store.current()))
+        val before = store.current()
+        val after = transform(before)
+        store.save(after)
+        // 去重是按「资源」而非「阈值」记账的，阈值/开关一变就必须清掉当日标记：
+        // 否则会出现"今天按 120 提醒过，改成 200 后当天永不提醒"——用户视角就是"满了不响"。
+        if (after.resinThreshold != before.resinThreshold || (!before.enabled && after.enabled)) {
+            store.clearNotified(ResinReminderStore.RESIN)
+        }
+        if (after.homeCoinThreshold != before.homeCoinThreshold ||
+            after.homeCoinEnabled != before.homeCoinEnabled
+        ) {
+            store.clearNotified(ResinReminderStore.HOME_COIN)
+        }
         reschedule()
     }
 
@@ -242,9 +323,16 @@ class ResinReminderManager @Inject constructor(
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         cancel()
         val config = store.current()
-        if (!config.enabled) return
+        if (!config.enabled) {
+            store.setNextTriggerAt(0L)
+            return
+        }
 
-        val note = dailyNoteRepository.loadLatest() ?: return
+        val note = dailyNoteRepository.loadLatest()
+        if (note == null) {
+            store.setNextTriggerAt(0L)
+            return
+        }
         val now = System.currentTimeMillis()
         val candidates = mutableListOf<Long>()
 
@@ -261,15 +349,52 @@ class ResinReminderManager @Inject constructor(
             }
         }
 
-        val next = candidates.minOrNull() ?: return
+        val next = candidates.minOrNull()
+        if (next == null) {
+            store.setNextTriggerAt(0L)
+            return
+        }
         val triggerAt = if (next <= now) now + IMMEDIATE_DELAY_MS else next
+        store.setNextTriggerAt(triggerAt)
         setAlarm(alarmManager, triggerAt)
     }
 
     /** 取消已排的提醒（关闭开关 / 退出登录时调用） */
-    fun cancel() {
+    suspend fun cancel() {
+        store.setNextTriggerAt(0L)
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
         alarmManager.cancel(pendingIntent())
+    }
+
+    /**
+     * 提醒链路自检：把"为什么不响"逐环节摊开（权限 / 渠道 / 精确闹钟 / 电池优化 / 快照 / 已排时刻）。
+     *
+     * 注意 [nextTriggerAt] 只反映"本应用最后一次排程的结果"——若此后系统因
+     * force-stop / 电池优化清掉了闹钟，这里看不出来，需要靠"实际没响"来暴露。
+     */
+    suspend fun diagnostics(): ReminderDiagnostics {
+        val config = store.current()
+        val note = dailyNoteRepository.loadLatest()
+        val alarmManager = context.getSystemService(AlarmManager::class.java)
+        val powerManager = context.getSystemService(PowerManager::class.java)
+        return ReminderDiagnostics(
+            enabled = config.enabled,
+            notificationPermissionGranted = ResinReminderNotifier.hasPermission(context),
+            channelEnabled = ResinReminderNotifier.isChannelEnabled(context),
+            exactAlarmAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                (alarmManager?.canScheduleExactAlarms() ?: false),
+            batteryOptimizationIgnored =
+                powerManager?.isIgnoringBatteryOptimizations(context.packageName) ?: true,
+            hasSnapshot = note != null,
+            snapshotAt = note?.fetchedAt ?: 0L,
+            nextTriggerAt = store.nextTriggerAt()
+        )
+    }
+
+    /** 设置页「发送测试通知」：仅验证通知链路，不改动提醒状态与去重标记 */
+    fun sendTestNotification(): Boolean {
+        ResinReminderNotifier.ensureChannel(context)
+        return ResinReminderNotifier.sendTest(context)
     }
 
     /** 闹钟到点：判定是否真的达标并通知，然后按新锚点重排 */
