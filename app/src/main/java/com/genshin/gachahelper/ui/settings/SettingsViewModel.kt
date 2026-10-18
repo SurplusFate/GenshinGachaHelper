@@ -18,6 +18,7 @@ import com.genshin.gachahelper.reminder.ReminderConfig
 import com.genshin.gachahelper.reminder.ReminderDiagnostics
 import com.genshin.gachahelper.reminder.ResinReminderManager
 import com.genshin.gachahelper.reminder.ResinReminderStore
+import com.genshin.gachahelper.prefs.AppPrefs
 import com.genshin.gachahelper.signin.SignInRepository
 import com.genshin.gachahelper.sync.GachaDataImporter
 import com.genshin.gachahelper.ui.logexport.LogExportDialogState
@@ -62,6 +63,7 @@ class SettingsViewModel @Inject constructor(
     // 2026-09-22：树脂/洞天宝钱阈值提醒（设置页为规则主体入口）
     private val reminderStore: ResinReminderStore,
     private val reminderManager: ResinReminderManager,
+    private val appPrefs: AppPrefs,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -179,6 +181,42 @@ class SettingsViewModel @Inject constructor(
             }
             _reminderDiagnostics.value = reminderManager.diagnostics()
         }
+    }
+
+    /**
+     * 排入 10 秒后的测试闹钟，验证「清后台 / 锁屏」下系统闹钟链路是否真能响（不影响真实提醒）。
+     *
+     * 诚实说明：App 被清到「停止」状态后，系统闹钟会被 ROM 一并清掉，这条测试也会不响——
+     * 那时请按「抗清后台必做（系统设置）」完成厂商设置三件套，而非依赖任何 App 内黑科技。
+     */
+    fun scheduleTestAlarm() {
+        viewModelScope.launch {
+            val triggerAt = reminderManager.scheduleTestAlarm()
+            _reminderTestMessage.value = if (triggerAt == 0L) {
+                "无法排入测试闹钟：获取 AlarmManager 失败"
+            } else {
+                "已排入 10 秒后测试闹钟：前台一定会响（系统闹钟）。" +
+                    "清后台后再验证一次，若不响请按「抗清后台必做」完成系统设置三件套。"
+            }
+            _reminderDiagnostics.value = reminderManager.diagnostics()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 隐藏后台（从最近任务列表消失）：App 侧对抗清后台的最直接手段
+    // ------------------------------------------------------------------
+
+    /** 是否开启「隐藏后台」：开启后本应用不出现在最近任务列表，用户划不到卡片 */
+    val hideFromRecents: StateFlow<Boolean> = appPrefs.hideFromRecentsFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = false
+        )
+
+    /** 切换「隐藏后台」开关（实际生效在 MainActivity 的 onResume 重新读取并 apply） */
+    fun setHideFromRecents(v: Boolean) {
+        viewModelScope.launch { appPrefs.setHideFromRecents(v) }
     }
 
     fun setWebDavEnabled(enabled: Boolean) {

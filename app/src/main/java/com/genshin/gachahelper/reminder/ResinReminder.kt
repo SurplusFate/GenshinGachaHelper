@@ -18,6 +18,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.genshin.gachahelper.ui.home.DailyNoteRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -108,7 +109,28 @@ data class ReminderDiagnostics(
     /** 快照时间 */
     val snapshotAt: Long = 0L,
     /** 已排入 AlarmManager 的下次提醒时刻，0 表示当前没有排程 */
-    val nextTriggerAt: Long = 0L
+    val nextTriggerAt: Long = 0L,
+
+    // 2026-09-24 新增：把「为什么没排 / 没响」再摊开一层——
+    // 仅靠 nextTriggerAt=0 只能看出"没排"，看不出是"已达标且今天提醒过"还是"阈值还没到"。
+    /** 当前树脂阈值（开启提醒时有效） */
+    val resinThreshold: Int = 0,
+    /** 按快照外推的当前树脂值 */
+    val currentResin: Int = 0,
+    /** 上次树脂提醒时刻（0=从未提醒） */
+    val lastResinNotifiedAt: Long = 0L,
+    /** 今天是否已经提醒过树脂 */
+    val resinNotifiedToday: Boolean = false,
+    /** 是否同时提醒洞天宝钱 */
+    val homeCoinEnabled: Boolean = false,
+    /** 当前洞天宝钱阈值 */
+    val homeCoinThreshold: Int = 0,
+    /** 按快照外推的当前洞天宝钱值 */
+    val currentHomeCoin: Int = 0,
+    /** 上次洞天宝钱提醒时刻（0=从未提醒） */
+    val lastHomeCoinNotifiedAt: Long = 0L,
+    /** 今天是否已经提醒过洞天宝钱 */
+    val homeCoinNotifiedToday: Boolean = false
 )
 
 /** 提醒配置与"上次提醒时间"的持久化 */
@@ -128,6 +150,8 @@ class ResinReminderStore @Inject constructor(
 
         /** 已排入 AlarmManager 的下一次提醒时刻，用于设置页「提醒自检」展示 */
         private val KEY_NEXT_TRIGGER_AT = longPreferencesKey("next_trigger_at")
+
+
 
         const val RESIN = "resin"
         const val HOME_COIN = "home_coin"
@@ -201,6 +225,8 @@ class ResinReminderStore @Inject constructor(
         val last = lastNotifiedAt(resource)
         return last > 0L && DailyNoteRepository.isSameLocalDay(last, now)
     }
+
+
 }
 
 /** 提醒通知渠道与发送（独立渠道，用户可单独静音） */
@@ -210,6 +236,15 @@ object ResinReminderNotifier {
     private const val RESIN_NOTIFICATION_ID = 2001
     private const val COIN_NOTIFICATION_ID = 2002
     private const val TEST_NOTIFICATION_ID = 2003
+    private const val TEST_ALARM_NOTIFICATION_ID = 2004
+
+    /** 测试闹钟通知的去抖窗口：同一次测试闹钟重复到达时只发一条 */
+    private const val TEST_ALARM_DEDUPE_MS = 60_000L
+
+    private val testAlarmLock = Any()
+
+    @Volatile
+    private var lastTestAlarmNotifyAt = 0L
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -242,11 +277,33 @@ object ResinReminderNotifier {
     fun sendTest(context: Context): Boolean =
         send(context, TEST_NOTIFICATION_ID, "树脂提醒测试", "看到这条通知说明提醒链路正常（权限、渠道、发送均可用）")
 
+    /**
+     * 测试闹钟到点后的反馈通知：明确告诉用户"闹钟链路通了"，并提示如何据此判断清后台是否安全。
+     * 与真实提醒完全隔离（不依赖开关/快照/去重），纯粹验证 AlarmManager → 接收器 → 通知 这条链路。
+     */
+    fun notifyTestAlarm(context: Context): Boolean {
+        // 测试闹钟去抖：同一时刻重复到达时只发一条（防御性，当前仅系统闹钟一条路径）。
+        // 理由同上：进程活着时两条路都会到点，若不折叠用户会看到两条重复通知。
+        val now = System.currentTimeMillis()
+        synchronized(testAlarmLock) {
+            if (now - lastTestAlarmNotifyAt < TEST_ALARM_DEDUPE_MS) return true
+            lastTestAlarmNotifyAt = now
+        }
+        val text = "✅ 测试闹钟已响：这是 10 秒前排入的闹钟。" +
+            "若你刚才清过后台它仍响，说明清后台提醒链路正常；若不响，说明你的 ROM 会强杀闹钟，" +
+            "请把本应用加入「自启动 / 电池优化」白名单。"
+        return send(context, TEST_ALARM_NOTIFICATION_ID, "树脂提醒·测试闹钟", text)
+    }
+
     /** 通知权限是否已授予（Android 13+ 需运行时授权，未授权时通知会被系统丢弃） */
-    fun hasPermission(context: Context): Boolean =
-        ContextCompat.checkSelfPermission(
+    fun hasPermission(context: Context): Boolean {
+        // Android 12 及以下不存在 POST_NOTIFICATIONS 运行时权限，系统默认允许通知；
+        // 若仍按 13+ 口径硬查该权限字符串，会误判为「未授权」导致所有通知静默。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return ContextCompat.checkSelfPermission(
             context, Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
+    }
 
     /** 提醒渠道是否可用：渠道被用户在系统里关闭（importance=NONE）时通知不会显示 */
     fun isChannelEnabled(context: Context): Boolean {
@@ -289,14 +346,33 @@ class ResinReminderManager @Inject constructor(
 ) {
     companion object {
         const val ACTION_REMINDER = "com.genshin.gachahelper.action.RESIN_REMINDER"
+        const val ACTION_TEST_ALARM = "com.genshin.gachahelper.action.RESIN_REMINDER_TEST"
         private const val REQUEST_CODE = 4101
+        private const val REQUEST_CODE_TEST = 4102
 
         /** 已达标但还没提醒过时，延迟这么久发（给"立即提醒"留出进程启动时间） */
         private const val IMMEDIATE_DELAY_MS = 3_000L
 
+        /** 测试闹钟：排入后多久响（毫秒），默认 10 秒 */
+        const val TEST_ALARM_DELAY_MS = 10_000L
+
         /** oncePerDay=false（每次达到都提醒）场景的最小提醒间隔，防止同值反复触发 */
         private const val MIN_REPEAT_INTERVAL_MS = 10 * 60_000L
+
+        /**
+         * 同一次提醒的去抖窗口（防御性）。
+         *
+         * 过去存在系统闹钟 + Shizuku 守护两个触发源时用于折叠重复通知；如今只剩系统闹钟一条路径，
+         * 该窗口保留为防御性去重。1 分钟窗口远小于任何合法的下一次提醒间隔，不会误吞。
+         */
+        private const val FIRE_DEDUPE_WINDOW_MS = 60_000L
     }
+
+    /** 配合 [FIRE_DEDUPE_WINDOW_MS]，同窗口内只允许处理一次，避免重复通知 */
+    private val fireLock = Any()
+
+    @Volatile
+    private var lastFireHandledAt = 0L
 
     /**
      * 保存配置并按新阈值重排闹钟：设置页与便笺卡片共用同一入口，
@@ -319,21 +395,33 @@ class ResinReminderManager @Inject constructor(
         reschedule()
     }
 
-    /** 便笺快照更新 / 配置变更 / 开机后调用：按最新锚点重排下一次提醒 */
+    /**
+     * 便笺快照更新 / 配置变更 / 开机 / 进程重启后调用：按最新锚点重排下一次提醒。
+     *
+     * ⚠️ 2026-10-08 关键修正（对应「后台一清、重开 App 就失效」）：
+     * 旧实现在**开头无条件 [cancel]** —— 而本方法在 App 每次冷启动（[com.genshin.gachahelper.GachaApp.onCreate]）
+     * 都会跑一遍。冷启动那一瞬间，快照尚未加载 / 已被清掉时 `loadLatest()` 返回 null，
+     * 旧代码于是"先清空系统闹钟，再直接 return" —— 结果是**重开 App 反而把
+     * 已经守好的提醒清成了 0**。用户视角就是"清后台后重新打开，提醒就没了"。
+     *
+     * 现在的原则：**只有在确实算出新的（或明确不需要）排程时才动闹钟**。
+     * 算不出来就原样保留现状，绝不空手清场。
+     * [onAlarmFired] 到点会重新判定阈值与去重，不达标的不会发通知。
+     */
     suspend fun reschedule() {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
-        cancel()
         val config = store.current()
+
+        // 提醒被关掉：明确解除武装（取消系统闹钟），避免留下到点仍响的幽灵通知
         if (!config.enabled) {
-            store.setNextTriggerAt(0L)
+            cancel()
             return
         }
 
-        val note = dailyNoteRepository.loadLatest()
-        if (note == null) {
-            store.setNextTriggerAt(0L)
-            return
-        }
+        // 没有快照 → 无从推算。**保留现状**，等拿到快照后由下一次 reschedule 接管。
+        // （旧实现在这里直接清空排程，是"重开 App 就失效"的直接原因之一。）
+        val note = dailyNoteRepository.loadLatest() ?: return
+
         val now = System.currentTimeMillis()
         val candidates = mutableListOf<Long>()
 
@@ -352,20 +440,23 @@ class ResinReminderManager @Inject constructor(
 
         val next = candidates.minOrNull()
         if (next == null) {
-            store.setNextTriggerAt(0L)
+            // 已达标且今日已提醒 / 无任何达标候选 → 此时才解除武装
+            cancel()
             return
         }
         val triggerAt = if (next <= now) now + IMMEDIATE_DELAY_MS else next
         store.setNextTriggerAt(triggerAt)
+        // setAlarm/setAlarmClock 用同一个 PendingIntent（REQUEST_CODE 固定），会直接覆盖上一条，
+        // 所以这里不再需要"先 cancel 再 set"，也就不会再出现"清了却没能重新排上"的空窗。
         setAlarm(alarmManager, triggerAt)
     }
 
-    /** 取消已排的提醒（关闭开关 / 退出登录时调用） */
     suspend fun cancel() {
         store.setNextTriggerAt(0L)
-        val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
-        alarmManager.cancel(pendingIntent())
+        context.getSystemService(AlarmManager::class.java)?.cancel(pendingIntent())
     }
+
+
 
     /**
      * 提醒链路自检：把"为什么不响"逐环节摊开（权限 / 渠道 / 精确闹钟 / 电池优化 / 快照 / 已排时刻）。
@@ -381,6 +472,9 @@ class ResinReminderManager @Inject constructor(
             val note = dailyNoteRepository.loadLatest()
             val alarmManager = context.getSystemService(AlarmManager::class.java)
             val powerManager = context.getSystemService(PowerManager::class.java)
+            val now = System.currentTimeMillis()
+            val lastResin = store.lastNotifiedAt(ResinReminderStore.RESIN)
+            val lastCoin = store.lastNotifiedAt(ResinReminderStore.HOME_COIN)
             ReminderDiagnostics(
                 enabled = config.enabled,
                 notificationPermissionGranted = ResinReminderNotifier.hasPermission(context),
@@ -391,7 +485,16 @@ class ResinReminderManager @Inject constructor(
                     powerManager?.isIgnoringBatteryOptimizations(context.packageName) ?: true,
                 hasSnapshot = note != null,
                 snapshotAt = note?.fetchedAt ?: 0L,
-                nextTriggerAt = store.nextTriggerAt()
+                nextTriggerAt = store.nextTriggerAt(),
+                resinThreshold = config.resinThreshold,
+                currentResin = note?.resinAt(now)?.value ?: 0,
+                lastResinNotifiedAt = lastResin,
+                resinNotifiedToday = DailyNoteRepository.isSameLocalDay(lastResin, now),
+                homeCoinEnabled = config.homeCoinEnabled,
+                homeCoinThreshold = config.homeCoinThreshold,
+                currentHomeCoin = note?.homeCoinAt(now)?.value ?: 0,
+                lastHomeCoinNotifiedAt = lastCoin,
+                homeCoinNotifiedToday = DailyNoteRepository.isSameLocalDay(lastCoin, now)
             )
         }
     }
@@ -402,29 +505,61 @@ class ResinReminderManager @Inject constructor(
         return ResinReminderNotifier.sendTest(context)
     }
 
-    /** 闹钟到点：判定是否真的达标并通知，然后按新锚点重排 */
+    /**
+     * 闹钟到点：判定是否真的达标并通知，然后按新锚点重排。
+     *
+         * 闹钟到点由系统闹钟 AlarmManager → [ResinReminderReceiver] 拉起（进程活着时）。
+         * 入口处保留短窗口去抖作防御性去重，避免同一时刻重复通知。
+     */
     suspend fun onAlarmFired() {
-        val config = store.current()
-        if (!config.enabled) return
-        val note = dailyNoteRepository.loadLatest() ?: return
-        val now = System.currentTimeMillis()
-
-        val resinProjection = note.resinAt(now)
-        if (shouldNotify(ResinReminderStore.RESIN, config, now, now) &&
-            resinProjection.value >= config.resinThreshold
-        ) {
-            ResinReminderNotifier.notifyResin(context, resinProjection.value, config.resinThreshold)
-            store.markNotified(ResinReminderStore.RESIN, now)
+        val now0 = System.currentTimeMillis()
+        // 去抖必须「判定 + 记录」原子完成：同一时刻重复到达时若各自通过检查，仍会重复发通知。
+        synchronized(fireLock) {
+            if (now0 - lastFireHandledAt < FIRE_DEDUPE_WINDOW_MS) return
+            lastFireHandledAt = now0
         }
 
-        if (config.homeCoinEnabled) {
-            val coinProjection = note.homeCoinAt(now)
-            if (shouldNotify(ResinReminderStore.HOME_COIN, config, now, now) &&
-                coinProjection.value >= config.homeCoinThreshold
+        val config = store.current()
+        if (!config.enabled) return
+        val note = dailyNoteRepository.loadLatest()
+        val now = System.currentTimeMillis()
+
+        // 2026-09-24 修复：notifyXxx 的返回值表示"是否真的发出去了"（权限/渠道任一不通即 false）。
+        // 此前忽略返回值、无条件 markNotified，导致"通知没发出、却被记为今天已提醒"，当天再不排程
+        // ——用户视角就是"树脂满了却永远收不到提醒"。必须只在发送成功后才记账。
+        if (note != null) {
+            val resinProjection = note.resinAt(now)
+            if (shouldNotify(ResinReminderStore.RESIN, config, now, now) &&
+                resinProjection.value >= config.resinThreshold
             ) {
-                ResinReminderNotifier.notifyHomeCoin(context, coinProjection.value, config.homeCoinThreshold)
-                store.markNotified(ResinReminderStore.HOME_COIN, now)
+                val sent = ResinReminderNotifier.notifyResin(
+                    context, resinProjection.value, config.resinThreshold
+                )
+                if (sent) store.markNotified(ResinReminderStore.RESIN, now)
             }
+
+            if (config.homeCoinEnabled) {
+                val coinProjection = note.homeCoinAt(now)
+                if (shouldNotify(ResinReminderStore.HOME_COIN, config, now, now) &&
+                    coinProjection.value >= config.homeCoinThreshold
+                ) {
+                    val sent = ResinReminderNotifier.notifyHomeCoin(
+                        context, coinProjection.value, config.homeCoinThreshold
+                    )
+                    if (sent) store.markNotified(ResinReminderStore.HOME_COIN, now)
+                }
+            }
+        }
+
+        // 通知链路不可用（权限未授予 / 渠道被关闭）时，本资源仍然"已达标且未记账"，
+        // 若照常重排会得到 "now + 3s" 的触发点，形成每 3 秒一次、永远发不出去的静默死循环。
+        // 此时清空排程，交由「提醒自检」面板把问题暴露给用户；用户修好权限后重开开关即可重排。
+        // 注意：即便快照缺失也走到这里继续重排——让闹钟在"无快照"时也能自愈，而非永久断链。
+        if (!ResinReminderNotifier.hasPermission(context) ||
+            !ResinReminderNotifier.isChannelEnabled(context)
+        ) {
+            store.setNextTriggerAt(0L)
+            return
         }
 
         reschedule()
@@ -456,17 +591,25 @@ class ResinReminderManager @Inject constructor(
     private fun setAlarm(alarmManager: AlarmManager?, triggerAt: Long) {
         alarmManager ?: return
         val pi = pendingIntent()
+        val canExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            alarmManager.canScheduleExactAlarms()
         try {
-            val canExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                alarmManager.canScheduleExactAlarms()
-            if (canExact) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
-            } else {
-                // 用户未授予精确闹钟权限：降级为非精确（Doze 下可能延后数分钟）
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
-            }
+            // 优先用 setAlarmClock：这是唯一能抵御国产 ROM「清后台/强杀即清闹钟」的闹钟类型，
+            // 系统会把它当作状态栏时钟对待，不会被后台管理静默丢弃
+            // （代价是状态栏会显示一个"到点提醒"的小闹钟图标，点到时即消失）。
+            val info = AlarmManager.AlarmClockInfo(triggerAt, pi)
+            alarmManager.setAlarmClock(info, pi)
         } catch (_: SecurityException) {
-            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            // 极端兜底：降级为精确闹钟 → 非精确 → 普通闹钟
+            try {
+                if (canExact) {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+                } else {
+                    alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+                }
+            } catch (_: SecurityException) {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            }
         }
     }
 
@@ -475,6 +618,64 @@ class ResinReminderManager @Inject constructor(
         return PendingIntent.getBroadcast(
             context,
             REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /**
+     * 排入一个 [TEST_ALARM_DELAY_MS] 毫秒后响的测试闹钟（默认 10 秒）。
+     *
+     * 用途：验证「清后台 / 锁屏 / 划掉 App」后提醒链路是否真能响——用户实测
+     * 「10 秒测试闹钟被清后台后一样没有」，验证的正是这条链路。
+     *
+         * 系统闹钟会被 ROM 的清后台动作连同进程一起抹掉，这就是为什么「清后台后测试不响」——此时请按设置页「抗清后台必做」完成系统设置三件套。
+     *
+     * 与真实提醒一样：**不读取 / 不修改任何提醒状态**（不改开关、不动去重标记、不重排真实闹钟）。
+     *
+     * @return 排程的触发时刻（毫秒），0 表示排入失败
+     */
+    fun scheduleTestAlarm(): Long {
+        val triggerAt = System.currentTimeMillis() + TEST_ALARM_DELAY_MS
+        val alarmManager = context.getSystemService(AlarmManager::class.java)
+
+        // ① 系统闹钟：始终排。这是 1.9.19 起早已验证可行的一条路，也是「进程活着时」
+        //    唯一能保证到点就响的机制。
+        val viaAlarmManager: Boolean = if (alarmManager != null) {
+            val pi = pendingIntentTest()
+            try {
+                alarmManager.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, pi), pi)
+                true
+            } catch (_: SecurityException) {
+                try {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                        alarmManager.canScheduleExactAlarms()
+                    ) {
+                        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+                    } else {
+                        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+                    }
+                    true
+                } catch (_: SecurityException) {
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+                    true
+                }
+            }
+        } else {
+            false
+        }
+
+
+        return if (viaAlarmManager) triggerAt else 0L
+    }
+
+
+    private fun pendingIntentTest(): PendingIntent {
+        val intent = Intent(context, ResinReminderTestReceiver::class.java)
+            .setAction(ACTION_TEST_ALARM)
+        return PendingIntent.getBroadcast(
+            context,
+            REQUEST_CODE_TEST,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -496,6 +697,21 @@ class ResinReminderReceiver : BroadcastReceiver() {
                 pendingResult.finish()
             }
         }
+    }
+}
+
+/**
+ * 测试闹钟接收器：仅供设置页「10 秒后测试闹钟」按钮使用。
+ *
+ * 与 [ResinReminderReceiver] 完全隔离——不读开关、不读快照、不动去重标记、不重排真实闹钟，
+ * 只发一条"测试闹钟已响"通知，用于验证「清后台 / 锁屏下 setAlarmClock 是否真能拉起通知」。
+ */
+class ResinReminderTestReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != ResinReminderManager.ACTION_TEST_ALARM) return
+        val appContext = context.applicationContext
+        ResinReminderNotifier.ensureChannel(appContext)
+        ResinReminderNotifier.notifyTestAlarm(appContext)
     }
 }
 

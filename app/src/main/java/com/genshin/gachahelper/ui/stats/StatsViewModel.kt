@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -102,24 +103,25 @@ class StatsViewModel @Inject constructor(
 
                 // DB 拉取 + 全量统计计算放到后台线程，避免阻塞主线程导致页面卡顿。
                 val loaded = withContext(Dispatchers.Default) {
-                    val characterRecords = gachaRepository.getRecordsByPool(
-                        account.id, GachaType.CHARACTER.value
-                    )
-                    val character2Records = gachaRepository.getRecordsByPool(
-                        account.id, GachaType.CHARACTER_2.value
-                    )
-                    val weaponRecords = gachaRepository.getRecordsByPool(
-                        account.id, GachaType.WEAPON.value
-                    )
-                    val standardRecords = gachaRepository.getRecordsByPool(
-                        account.id, GachaType.STANDARD.value
-                    )
-                    val noviceRecords = gachaRepository.getRecordsByPool(
-                        account.id, GachaType.NOVICE.value
-                    )
-                    val chronicledRecords = gachaRepository.getRecordsByPool(
-                        account.id, GachaType.CHRONICLED.value
-                    )
+                    // 8 个独立查询（6 卡池 + 图鉴 + 日历）并发执行，摊薄 Room 往返延迟。
+                    // 先全部 async 启动（立即派发），再逐个 await 收集，确保并行而非串行。
+                    val characterDef = async { gachaRepository.getRecordsByPool(account.id, GachaType.CHARACTER.value) }
+                    val character2Def = async { gachaRepository.getRecordsByPool(account.id, GachaType.CHARACTER_2.value) }
+                    val weaponDef = async { gachaRepository.getRecordsByPool(account.id, GachaType.WEAPON.value) }
+                    val standardDef = async { gachaRepository.getRecordsByPool(account.id, GachaType.STANDARD.value) }
+                    val noviceDef = async { gachaRepository.getRecordsByPool(account.id, GachaType.NOVICE.value) }
+                    val chronicledDef = async { gachaRepository.getRecordsByPool(account.id, GachaType.CHRONICLED.value) }
+                    val itemDef = async { gachaRepository.getItemCollection(account.id) }
+                    val dailyDef = async { gachaRepository.getDailyStats(account.id) }
+
+                    val characterRecords = characterDef.await()
+                    val character2Records = character2Def.await()
+                    val weaponRecords = weaponDef.await()
+                    val standardRecords = standardDef.await()
+                    val noviceRecords = noviceDef.await()
+                    val chronicledRecords = chronicledDef.await()
+                    val itemCollection = itemDef.await()
+                    val dailyStats = dailyDef.await()
 
                     val report = statsCalculator.generateReport(
                         characterRecords = characterRecords,
@@ -139,8 +141,6 @@ class StatsViewModel @Inject constructor(
                         noviceRecords = noviceRecords,
                         chronicledRecords = chronicledRecords
                     )
-                    val itemCollection = gachaRepository.getItemCollection(account.id)
-                    val dailyStats = gachaRepository.getDailyStats(account.id)
 
                     StatsUiState(
                         report = report,

@@ -57,6 +57,25 @@
             </intent-filter>
         </receiver>
 
+        <!-- 测试闹钟回调：仅供设置页「10 秒后测试闹钟」验证清后台链路，与真实提醒隔离 -->
+        <receiver
+            android:name=".reminder.ResinReminderTestReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.genshin.gachahelper.action.RESIN_REMINDER_TEST" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 固定时刻批量任务（凌晨1点 / 下午1点）：同步便笺（树脂+洞天宝钱）+ 自动签到 -->
+        <receiver
+            android:name=".task.ScheduledTaskReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.genshin.gachahelper.action.SCHEDULED_TASK" />
+            </intent-filter>
+        </receiver>
+
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -66,6 +85,7 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
 
         <!-- GachaApp 实现 Configuration.Provider（on-demand 初始化），移除 work 库自带默认初始化器 -->
         <provider

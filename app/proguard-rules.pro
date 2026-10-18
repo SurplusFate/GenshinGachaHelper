@@ -16,3 +16,4 @@
 
 # 网络层（Retrofit 接口与响应数据类）
 -keep class com.genshin.gachahelper.remote.** { *; }
+

@@ -16,6 +16,9 @@ import dagger.assisted.AssistedInject
  * 返回策略：
  * - 网络等瞬时失败（[AutoState.RETRY]）→ [Result.retry] 交给 WorkManager 指数退避重试；
  * - 其余情况（成功 / 今日已签 / 普通失败 / 登录失效已暂停）→ [Result.success]。
+ *
+ * 通知：执行完由 [SignInRepository.publishAutoResult] 按结果补发系统通知
+ * （2026-09-24 修复：此前本 Worker 从不发通知，后台自动签到全程静默）。
  */
 @HiltWorker
 class DailySignInWorker @AssistedInject constructor(
@@ -30,6 +33,9 @@ class DailySignInWorker @AssistedInject constructor(
             return Result.success()
         }
         val outcome = signInRepository.performAutoSignIn()
+        // 后台自动签到是"用户不在场"的场景：进展性结果（签到成功 / 风控 / 失败）必须发系统通知，
+        // 否则用户看不到任何反馈。"今日已签到"与"网络重试"由 publishAutoResult 内部过滤，不打扰。
+        signInRepository.publishAutoResult(outcome)
         return if (outcome.state == AutoState.RETRY) {
             Result.retry()
         } else {

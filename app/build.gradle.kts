@@ -35,6 +35,7 @@ android {
     namespace = "com.genshin.gachahelper"
     compileSdk = 36
 
+
     signingConfigs {
         // 口令/别名一律外置，禁止硬编码入库；凭据缺失时不创建签名配置
         if (hasReleaseSigning) {
@@ -51,8 +52,8 @@ android {
         applicationId = "com.genshin.gachahelper"
         minSdk = 26
         targetSdk = 36
-        versionCode = 76
-        versionName = "1.9.15"
+        versionCode = 93
+        versionName = "1.9.32"
 
         // 无 androidTest 源码集，不再声明悬空的 instrumentation runner
         vectorDrawables {
@@ -161,6 +162,7 @@ dependencies {
 
     // QR Code
     implementation(libs.zxing.core)
+
 
     // Testing
     testImplementation(libs.junit)

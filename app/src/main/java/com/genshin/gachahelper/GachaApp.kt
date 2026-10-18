@@ -7,7 +7,9 @@ import androidx.work.Configuration
 import com.genshin.gachahelper.core.CrashCatcher
 import com.genshin.gachahelper.core.SessionEvent
 import com.genshin.gachahelper.core.SessionEventBus
+import com.genshin.gachahelper.reminder.ResinReminderManager
 import com.genshin.gachahelper.signin.SignInRepository
+import com.genshin.gachahelper.task.ScheduledTaskManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +37,12 @@ class GachaApp : Application(), Configuration.Provider {
     @Inject
     lateinit var signInRepository: SignInRepository
 
+    @Inject
+    lateinit var reminderManager: ResinReminderManager
+
+    @Inject
+    lateinit var scheduledTaskManager: ScheduledTaskManager
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun attachBaseContext(base: Context) {
@@ -53,6 +61,14 @@ class GachaApp : Application(), Configuration.Provider {
         com.genshin.gachahelper.auth.AppLog.bootstrap(this)
         // 进程启动即补偿一次：自动签到开启且今日未签到 → 立即补签（幂等，带防抖）
         appScope.launch { signInRepository.onLaunchOrBoot() }
+        // 进程启动即重建树脂/洞天宝钱提醒闹钟（2026-09-26 修复「清理后台就彻底挂了」）：
+        // 国产 ROM 在清后台/强杀时会清掉 AlarmManager 的精确闹钟，且此前 App 冷启动从不重排，
+        // 导致提醒链路永久断掉——直到重启手机（SignInBootReceiver）才恢复。这里每次进 App 都重排一次，
+        // 配合 setAlarmClock 的高存活闹钟，清后台后再打开 App 即可自愈。
+        appScope.launch { reminderManager.reschedule() }
+        // 固定时刻批量任务（凌晨1点 / 下午1点）：同步便笺（树脂+洞天宝钱）+ 自动签到。
+        // 每次进 App 重排一次，配合 setAlarmClock 的高存活闹钟，清后台后再打开 App 即可自愈。
+        scheduledTaskManager.scheduleAll()
         // 登录完成后恢复可能被暂停的自动签到（重新注册周期任务并补签）
         appScope.launch {
             sessionEventBus.events.collectLatest { event ->

@@ -75,6 +75,7 @@ gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 # QR Code
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
+
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 kotlin-test-junit = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlin" }

@@ -42,6 +42,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 import javax.inject.Inject
@@ -307,25 +310,24 @@ class HomeViewModel @Inject constructor(
     private suspend fun loadStats(accountId: Long) {
         // DB 拉取与全量统计均在后台线程执行，避免数万条记录排序/分组阻塞主线程。
         val result = withContext(Dispatchers.Default) {
-            // 加载各卡池记录并计算统计（包含角色活动祈愿-2 和集录祈愿）
-            val characterRecords = gachaRepository.getRecordsByPool(
-                accountId, GachaType.CHARACTER.value
-            )
-            val character2Records = gachaRepository.getRecordsByPool(
-                accountId, GachaType.CHARACTER_2.value
-            )
-            val weaponRecords = gachaRepository.getRecordsByPool(
-                accountId, GachaType.WEAPON.value
-            )
-            val standardRecords = gachaRepository.getRecordsByPool(
-                accountId, GachaType.STANDARD.value
-            )
-            val chronicledRecords = gachaRepository.getRecordsByPool(
-                accountId, GachaType.CHRONICLED.value
-            )
-            val noviceRecords = gachaRepository.getRecordsByPool(
-                accountId, GachaType.NOVICE.value
-            )
+            // 6 个卡池查询彼此独立：并发执行以摊薄 Room 往返延迟。
+            // 大数据量账号（数万条记录）下，串行 6 次往返 vs 并发 1 次窗口，体感差异明显。
+            val poolRecordList = coroutineScope {
+                listOf(
+                    async { gachaRepository.getRecordsByPool(accountId, GachaType.CHARACTER.value) },
+                    async { gachaRepository.getRecordsByPool(accountId, GachaType.CHARACTER_2.value) },
+                    async { gachaRepository.getRecordsByPool(accountId, GachaType.WEAPON.value) },
+                    async { gachaRepository.getRecordsByPool(accountId, GachaType.STANDARD.value) },
+                    async { gachaRepository.getRecordsByPool(accountId, GachaType.CHRONICLED.value) },
+                    async { gachaRepository.getRecordsByPool(accountId, GachaType.NOVICE.value) }
+                ).awaitAll()
+            }
+            val characterRecords = poolRecordList[0]
+            val character2Records = poolRecordList[1]
+            val weaponRecords = poolRecordList[2]
+            val standardRecords = poolRecordList[3]
+            val chronicledRecords = poolRecordList[4]
+            val noviceRecords = poolRecordList[5]
 
             // 生成全局报告（内部一次性算出各池 PoolStats，UI 层禁止重复调用计算器）
             val report = statsCalculator.generateReport(
@@ -470,20 +472,19 @@ class HomeViewModel @Inject constructor(
         val cachedIsToday = cached != null &&
             DailyNoteRepository.isSameLocalDay(cached.fetchedAt, now)
 
-        // 本地已有"今天"的快照：只更新 UI，不触碰网络——这就是"每天只拉一次"的落点
-        if (!force && cachedIsToday) {
-            lastDailyNoteFetchAt = now
-            _uiState.value = _uiState.value.copy(
-                dailyNote = cached,
-                dailyNoteError = null,
-                dailyNoteErrorCode = null,
-                dailyNoteLoading = false
-            )
-            // 每次拿到（或读到）快照都按最新锚点重排阈值提醒的闹钟，
-            // 保证"预计到达时刻"跟着最新数据走
-            reminderManager.reschedule()
-            return
-        }
+            // 本地已有"今天"的快照：只更新 UI，不触碰网络——这就是"每天只拉一次"的落点。
+            // 闹钟重排交由 GachaApp.onCreate（每次进 App 都会跑一次）与配置变更统一负责，
+            // 这里不再重复触发，避免每次进首页都做一次 DataStore 读 + Gson 解析 + 闹钟操作。
+            if (!force && cachedIsToday) {
+                lastDailyNoteFetchAt = now
+                _uiState.value = _uiState.value.copy(
+                    dailyNote = cached,
+                    dailyNoteError = null,
+                    dailyNoteErrorCode = null,
+                    dailyNoteLoading = false
+                )
+                return
+            }
 
         // 需要联网时的重复请求保护：跨天补拉失败后不至于高频重试
         if (!force && now - lastDailyNoteFetchAt < DAILY_NOTE_TTL_MS) return

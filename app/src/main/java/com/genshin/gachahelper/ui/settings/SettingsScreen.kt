@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -56,6 +57,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.genshin.gachahelper.BuildConfig
 import com.genshin.gachahelper.auth.AppLog
 import com.genshin.gachahelper.reminder.ReminderConfig
+import com.genshin.gachahelper.reminder.ReminderDiagnostics
 import com.genshin.gachahelper.reminder.ResinReminderNotifier
 import com.genshin.gachahelper.ui.dockContentBottomPadding
 import com.genshin.gachahelper.ui.GlassSurface
@@ -156,6 +158,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 requestReminderPermission = requestReminderPermission
             )
         }
+        item(key = "keepalive") { KeepAliveSection(viewModel) }
         item(key = "webdav") { WebDavSection(viewModel) }
         item(key = "about") { AboutSection(viewModel) }
     }
@@ -501,8 +504,9 @@ private fun ReminderDiagnosticsSection(
 
     SettingsSection(title = "提醒自检") {
         Text(
-            text = "判断「为什么没收到提醒」用。系统会在省电模式或划掉后台时清掉闹钟，" +
-                "把本应用加入电池优化白名单，提醒才稳定。",
+            text = "判断「为什么没收到提醒」用。系统会在省电模式或划掉后台时清掉闹钟。" +
+                "下面逐项都正常却仍不响，多半是「被划掉后台」——请到下方「抗清后台必做（系统设置）」" +
+                "完成自启动 / 卡片锁 / 电池无限制三件套。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -558,11 +562,44 @@ private fun ReminderDiagnosticsSection(
                 text = if (diagnostics.nextTriggerAt > 0L) {
                     "已排下次提醒：${formatReminderTime(diagnostics.nextTriggerAt)}"
                 } else {
-                    "当前没有已排的提醒（开关关闭 / 无快照 / 已达阈值且今天已提醒）"
+                    "当前没有已排的提醒"
                 },
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            // 2026-09-24 新增：不再只丢一句"没有已排提醒"让用户自己猜，
+            // 直接按实际状态说明原因（开关关 / 无快照 / 今日已提醒 / 未达标）。
+            Text(
+                text = reminderStatusDetail(diagnostics),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (diagnostics.enabled) {
+                Text(
+                    text = "树脂：当前 ${diagnostics.currentResin} / 阈值 ${diagnostics.resinThreshold}" +
+                        if (diagnostics.resinNotifiedToday) {
+                            "，今日已提醒（${formatReminderTime(diagnostics.lastResinNotifiedAt)}）"
+                        } else {
+                            "，今日未提醒"
+                        },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (diagnostics.homeCoinEnabled) {
+                    Text(
+                        text = "洞天宝钱：当前 ${diagnostics.currentHomeCoin} / 阈值 " +
+                            "${diagnostics.homeCoinThreshold}" +
+                            if (diagnostics.homeCoinNotifiedToday) {
+                                "，今日已提醒（${formatReminderTime(diagnostics.lastHomeCoinNotifiedAt)}）"
+                            } else {
+                                "，今日未提醒"
+                            },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -572,6 +609,9 @@ private fun ReminderDiagnosticsSection(
             }
             OutlinedButton(onClick = { viewModel.refreshReminderDiagnostics() }) {
                 Text(text = "重新检测")
+            }
+            OutlinedButton(onClick = { viewModel.scheduleTestAlarm() }) {
+                Text(text = "10秒后测试闹钟")
             }
         }
         reminderTestMessage?.let { message ->
@@ -583,6 +623,60 @@ private fun ReminderDiagnosticsSection(
             )
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 抗清后台必做（系统设置）：社区（GKD 等）验证有效的保活三件套
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun KeepAliveSection(viewModel: SettingsViewModel) {
+    val context = LocalContext.current
+    val hideFromRecents by viewModel.hideFromRecents.collectAsState()
+    SettingsSection(title = "抗清后台必做（系统设置）") {
+        // ① 自启动：Android 无统一设置页，只能跳应用详情页由各品牌提供入口。
+        OutlinedButton(
+            onClick = { openAppDetailsSettings(context) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("① 允许自启动")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        // ② 任务卡片加锁：无系统入口，需用户在最近任务手动锁定。
+        Text(
+            text = "② 任务卡片加锁：最近任务长按卡片 → 点锁图标",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        // ③ 电池无限制：关掉电池优化，避免系统清掉后台闹钟与进程。
+        OutlinedButton(
+            onClick = { requestIgnoreBatteryOptimization(context) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("③ 电池设为无限制")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        // ④ 隐藏后台：开启后本应用从最近任务列表消失（App 侧对抗清后台的最直接手段）
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "④ 隐藏后台（不在最近任务显示）",
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = hideFromRecents,
+                onCheckedChange = { viewModel.setHideFromRecents(it) }
+            )
+        }
+    }
+}
+
+/** 跳「应用详情」系统设置页（自启动/电池/权限大多藏在应用详情里） */
+private fun openAppDetailsSettings(context: Context) {
+    val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        .setData(Uri.fromParts("package", context.packageName, null))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
 }
 
 // ---------------------------------------------------------------------------
@@ -918,6 +1012,23 @@ private fun requestIgnoreBatteryOptimization(context: Context) {
         .setData(Uri.parse("package:${context.packageName}"))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { context.startActivity(intent) }
+}
+
+/**
+ * 「当前没有已排的提醒」的原因说明（2026-09-24 新增）。
+ *
+ * 把 [ReminderDiagnostics] 里 nextTriggerAt=0 的真实成因翻成人话，
+ * 用户无需再对着三种可能性自行猜测。
+ */
+private fun reminderStatusDetail(d: ReminderDiagnostics): String = when {
+    !d.enabled -> "提醒开关未开启——打开上方「开启提醒」后才会排程。"
+    !d.hasSnapshot -> "没有便笺快照，无法推算时刻——先登录并刷新一次便笺。"
+    d.resinNotifiedToday ->
+        "今天已按阈值提醒过一次，按「每天只提醒一次」今天不再重复，明天自动恢复" +
+            "（想每次都提醒可关闭该开关）。"
+    d.currentResin >= d.resinThreshold ->
+        "树脂已达阈值，正在等待触发；若始终收不到，请点「发送测试通知」验证通知链路。"
+    else -> "树脂尚未到达阈值，到达时会自动提醒。"
 }
 
 /** 提醒时刻展示格式化 */

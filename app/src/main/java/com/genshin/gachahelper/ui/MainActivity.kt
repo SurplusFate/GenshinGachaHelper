@@ -1,6 +1,7 @@
 package com.genshin.gachahelper.ui
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -18,7 +19,10 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.genshin.gachahelper.core.CrashCatcher
+import androidx.lifecycle.lifecycleScope
+import com.genshin.gachahelper.prefs.AppPrefs
 import com.genshin.gachahelper.signin.SignInRepository
+import kotlinx.coroutines.launch
 import com.genshin.gachahelper.ui.theme.GenshinGachaHelperTheme
 import com.genshin.gachahelper.ui.theme.ThemeMode
 import com.genshin.gachahelper.ui.theme.ThemeRepository
@@ -33,6 +37,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var signInRepository: SignInRepository
+
+    @Inject
+    lateinit var appPrefs: AppPrefs
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,6 +58,11 @@ class MainActivity : ComponentActivity() {
         // 它内部按"系统深色模式"自动附加对比 scrim —— 当系统是深色、
         // 而 App 内是浅色主题时，状态栏会被叠一层黑色遮罩（黑底白字假象）。
         // 因此统一放到 setContent 里按 App 实际主题设置全透明 scrim。
+        // 隐藏后台：按用户设置决定本应用是否出现在最近任务列表。开启后用户划不到卡片，
+        // 「一键清理 / 划掉后台」无从杀起——这是 App 侧对抗清后台最直接、最彻底的手段。
+        // （读取 DataStore 是异步的，读完后切回主线程调用 setExcludeFromRecents）
+        lifecycleScope.launch { applyExcludeFromRecents(appPrefs.isHideFromRecents()) }
+
         setContent {
             // 读取当前 theme mode；FOLLOW_SYSTEM 会通过 isSystemInDarkTheme() 的系统值自动响应
             val themeMode by themeRepository.themeModeFlow
@@ -101,7 +113,23 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // 隐藏后台开关可能在设置页被切换：每次回到前台重新读取并 apply，确保立即生效。
+        lifecycleScope.launch { applyExcludeFromRecents(appPrefs.isHideFromRecents()) }
         // App 回到前台补偿：自动签到开启且今日未签到 → 补签（带防抖，幂等）
         signInRepository.onLaunchOrBoot()
+    }
+
+    /**
+     * 隐藏后台：按开关决定是否让本应用出现在「最近任务」列表。
+     *
+     * 框架的 Activity 本身没有 setExcludeFromRecents 方法；正确做法是拿到当前 AppTask
+     * 后调用 [android.app.ActivityManager.AppTask.setExcludeFromRecents]。开启后最近任务列表里
+     * 看不到本应用卡片，「一键清理 / 划掉后台」无从杀起——这是 App 侧对抗清后台最直接、最彻底的手段。
+     * 在 onCreate 与 onResume 各 apply 一次：开关在设置页切换后回到前台即可立即生效。
+     */
+    private fun applyExcludeFromRecents(exclude: Boolean) {
+        getSystemService(ActivityManager::class.java)
+            ?.appTasks
+            ?.forEach { it.setExcludeFromRecents(exclude) }
     }
 }

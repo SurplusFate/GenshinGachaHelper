@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -142,7 +143,9 @@ class SignInRepository @Inject constructor(
                 if (authRepository.isLoggedIn()) {
                     ensureScheduled()
                     val r = performAutoSignIn()
-                    publish(r.message, notifyUser = r.state != AutoState.RETRY)
+                    // 尊重 performAutoSignIn 的口径：只有"进展性结果"才弹系统通知，
+                    // "今日已签到"仅作页面内提示（用户此刻就在 App 里，不必再打扰）。
+                    publish(r.message, notifyUser = r.notifyUser)
                 } else {
                     cancelScheduled()
                     cancelNotification()
@@ -430,6 +433,20 @@ class SignInRepository @Inject constructor(
         if (notifyUser) notify(message)
     }
 
+    /**
+     * 后台 Worker 专用：签到完成后按结果决定是否补发系统通知。
+     *
+     * 2026-09-24 修复：此前 [DailySignInWorker] 拿到 [performAutoSignIn] 的结果后直接返回，
+     * 从不发通知——后台自动签到全程静默，用户以为"自动签到没生效 / 没收到通知"。
+     * 与前台补偿（[checkAndRestore] 一律 notifyUser=false，因为用户就在 App 里看得到）
+     * 区分开：后台是"用户不在场"场景，进展性结果必须靠系统通知触达。
+     * 今日已签到（notifyUser=false）与网络重试（RETRY）不打扰用户。
+     */
+    fun publishAutoResult(result: AutoSignInResult) {
+        if (result.state == AutoState.RETRY) return
+        if (result.notifyUser) notify(result.message)
+    }
+
     /** 创建签到通知渠道（幂等） */
     fun ensureChannel() {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -444,9 +461,12 @@ class SignInRepository @Inject constructor(
     }
 
     private fun notify(message: String) {
-        val permissionGranted = ContextCompat.checkSelfPermission(
-            context, android.Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
+        // Android 12 及以下不存在 POST_NOTIFICATIONS 运行时权限，系统默认允许通知；
+        // 若按 13+ 口径硬查该权限字符串会误判为「未授权」，导致所有通知静默。
+        val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
         if (!permissionGranted) return
 
         ensureChannel()

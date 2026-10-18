@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.genshin.gachahelper.reminder.ResinReminderManager
+import com.genshin.gachahelper.task.ScheduledTaskManager
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -30,9 +31,14 @@ class SignInBootReceiver : BroadcastReceiver() {
     @Inject
     lateinit var reminderManager: ResinReminderManager
 
+    @Inject
+    lateinit var scheduledTaskManager: ScheduledTaskManager
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         signInRepository.onLaunchOrBoot()
+        // 开机后 AlarmManager 中已排的精确闹钟全部失效，这里把固定时刻批量任务也重新排上
+        scheduledTaskManager.scheduleAll()
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
