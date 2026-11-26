@@ -1,10 +1,14 @@
 pluginManagement {
     repositories {
-        // 沙箱/国内网络环境：官方源（dl.google.com / plugins.gradle.org）常被拦截，
-        // 优先走可达的阿里云镜像，缺的构件从镜像补、已缓存的命中本地缓存。
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        // 阿里云镜像只给国内本地环境用。GitHub Actions 是境外 runner，
+        // 镜像排在官方源之前会让 Gradle 在 KSP 插件解析阶段直接 not found
+        // （2026-09-21 已在 7dbc31a 踩过一次，v1.9.32 合并时又被带回来）。
+        // 这里用 CI 环境变量二分，两边各走各的。
+        if (System.getenv("CI") != "true") {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+        }
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -13,8 +17,10 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        if (System.getenv("CI") != "true") {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+        }
         google()
         mavenCentral()
     }
