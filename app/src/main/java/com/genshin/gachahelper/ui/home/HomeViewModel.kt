@@ -472,19 +472,19 @@ class HomeViewModel @Inject constructor(
         val cachedIsToday = cached != null &&
             DailyNoteRepository.isSameLocalDay(cached.fetchedAt, now)
 
-            // 本地已有"今天"的快照：只更新 UI，不触碰网络——这就是"每天只拉一次"的落点。
-            // 闹钟重排交由 GachaApp.onCreate（每次进 App 都会跑一次）与配置变更统一负责，
-            // 这里不再重复触发，避免每次进首页都做一次 DataStore 读 + Gson 解析 + 闹钟操作。
-            if (!force && cachedIsToday) {
-                lastDailyNoteFetchAt = now
-                _uiState.value = _uiState.value.copy(
-                    dailyNote = cached,
-                    dailyNoteError = null,
-                    dailyNoteErrorCode = null,
-                    dailyNoteLoading = false
-                )
-                return
-            }
+        // 本地已有"今天"的快照：只更新 UI，不触碰网络——这就是"每天只拉一次"的落点。
+        // 闹钟重排交由 GachaApp.onCreate（每次进 App 都会跑一次）与配置变更统一负责，
+        // 这里不再重复触发，避免每次进首页都做一次 DataStore 读 + Gson 解析 + 闹钟操作。
+        if (!force && cachedIsToday) {
+            lastDailyNoteFetchAt = now
+            _uiState.value = _uiState.value.copy(
+                dailyNote = cached,
+                dailyNoteError = null,
+                dailyNoteErrorCode = null,
+                dailyNoteLoading = false
+            )
+            return
+        }
 
         // 需要联网时的重复请求保护：跨天补拉失败后不至于高频重试
         if (!force && now - lastDailyNoteFetchAt < DAILY_NOTE_TTL_MS) return
