@@ -110,6 +110,23 @@ class MihoyoApiService @Inject constructor(
         private const val API_GET_LTOKEN_BY_STOKEN =
             "$PASSPORT_BASE/account/auth/api/getLTokenBySToken"
 
+        // ============== 用 stoken 换 v2 token（2026-11-20 改版后唯一可用通道） ==============
+        // 米游社 11-20 起：
+        //   · account/auth/api/getCookieAccountInfoBySToken → HTTP 405（GET/POST 均废）
+        //   · account/auth/api/getLTokenBySToken → retcode -100「登录状态失效」
+        //   · account/ma-cn-session/app/getTokenBySToken → -5300（SDK 源码标注已下线）
+        // 只剩 passport 账号域的 exchange，签发的就是 v2 cookie_token / ltoken。
+        private const val API_EXCHANGE_TOKEN =
+            "$PASSPORT_BASE/account/ma-cn-session/app/exchange"
+        // 米游社 App 本体的 passport app_id（HYP），换票必须用它而不是扫码容器的 app_id
+        private const val HYP_APP_ID = "bll8iq97cem8"
+        private const val HYP_APP_UA = "okhttp/4.9.3"
+        private const val HYP_APP_VERSION = "2.118.1"
+        private const val HYP_SDK_VERSION = "2.44.0"
+        // exchange 的 dst_token_type：2 = ltoken(v2)，4 = cookie_token(v2)
+        const val DST_LTOKEN = 2
+        const val DST_COOKIE_TOKEN = 4
+
         // ============== 旧 hk4e SDK 扫码登录（已废弃，保留备用） ==============
         private const val API_QRCODE_FETCH =
             "https://hk4e-sdk.mihoyo.com/hk4e_cn/combo/panda/qrcode/fetch"
@@ -333,6 +350,95 @@ class MihoyoApiService @Inject constructor(
                 ApiResult.Error("查询通行证扫码状态异常: ${e.message}", -1, "", "passportQuery")
             }
         }
+
+    // ------------------------------------------------------------------
+    // P3-新. 用 stoken 换 v2 cookie_token / ltoken（2026-11-20 改版后唯一可用通道）
+    //
+    // 为什么必须走这里：11-20 之后扫码登录只返回一个 v2_ 开头的 stoken，
+    // 老的 getCookieAccountInfoBySToken / getLTokenBySToken 全废（405 / -100）。
+    // 拿不到 cookie_token + ltoken，后续 binding / luna 系接口会一律
+    // -100「登录状态失效」（真机实测：只带 stoken 打 getGameRoles 必 -100）。
+    //
+    // 接口要求（2026-11-21 抓包 + 官方 App 2.118.1 静态逆向，社区实测）：
+    //   · DS 用 passport SDK 的 SALT_PROD，不是网页 4X
+    //   · body 字段顺序必须是 Java HashMap 桶序：mid → dst_token_type → src_token
+    //   · 设备身份必须与 stoken 签发时一致（同一 device_id / device_fp）
+    // ------------------------------------------------------------------
+    suspend fun exchangeTokenByStoken(
+        stoken: String,
+        mid: String?,
+        dstTokenType: Int
+    ): ApiResult<String> = withContext(Dispatchers.IO) {
+        try {
+            if (mid.isNullOrBlank()) {
+                return@withContext ApiResult.Error(
+                    "缺少 mid，无法换取 v2 凭据", -1, "", "exchangeToken"
+                )
+            }
+            // 手拼 JSON：必须保证 mid → dst_token_type → src_token 的顺序
+            val body = "{\"mid\":\"$mid\",\"dst_token_type\":$dstTokenType," +
+                "\"src_token\":{\"token_type\":1,\"token\":\"$stoken\"}}"
+            val ds = DsSigner.generateDSProd(body)
+            val deviceId = authRepository.getOrCreateDeviceId()
+            val deviceFp = deviceFpService.getOrCreateDeviceFp()
+
+            val request = Request.Builder()
+                .url(API_EXCHANGE_TOKEN)
+                .addHeader("Content-Type", "application/json")
+                .addHeader("DS", ds)
+                .addHeader("Accept", "application/json")
+                .addHeader("User-Agent", HYP_APP_UA)
+                .addHeader("x-rpc-app_id", HYP_APP_ID)
+                .addHeader("x-rpc-client_type", "2")
+                .addHeader("x-rpc-device_id", deviceId)
+                .addHeader("x-rpc-device_fp", deviceFp ?: "")
+                .addHeader("x-rpc-device_name", "iPhone15,2")
+                .addHeader("x-rpc-device_model", "iPhone15,2")
+                .addHeader("x-rpc-sys_version", "18.0")
+                .addHeader("x-rpc-game_biz", "bbs_cn")
+                .addHeader("x-rpc-app_version", HYP_APP_VERSION)
+                .addHeader("x-rpc-sdk_version", HYP_SDK_VERSION)
+                .addHeader("x-rpc-account_version", HYP_SDK_VERSION)
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val respBody = response.body?.string() ?: ""
+
+            AppLog.i(
+                "Token", "exchange",
+                "POST url=$API_EXCHANGE_TOKEN dst=$dstTokenType resp http=${response.code} " +
+                    "trace=${response.header("x-trace-id") ?: "-"} body=${respBody.take(200)}"
+            )
+
+            if (!response.isSuccessful) {
+                return@withContext ApiResult.Error(
+                    "HTTP ${response.code}", response.code, respBody, "exchangeToken"
+                )
+            }
+
+            val json = JsonParser.parseString(respBody).asJsonObject
+            val retcode = json.get("retcode")?.asInt ?: -1
+            if (retcode != 0) {
+                val msg = json.get("message")?.asString ?: "未知错误"
+                return@withContext ApiResult.Error(
+                    "$msg (code: $retcode)", retcode, respBody, "exchangeToken"
+                )
+            }
+
+            val token = json.getAsJsonObjectSafe("data")
+                ?.getAsJsonObjectSafe("token")
+                ?.get("token")?.asStringSafe()
+                ?: return@withContext ApiResult.Error(
+                    "响应缺少 data.token.token", -1, respBody, "exchangeToken"
+                )
+
+            ApiResult.Success(token)
+        } catch (e: Exception) {
+            AppLog.e("Token", "exchange", "异常 ${e.javaClass.simpleName}: ${e.message}", e)
+            ApiResult.Error("换取 v2 凭据异常: ${e.message}", -1, "", "exchangeToken")
+        }
+    }
 
     // ------------------------------------------------------------------
     // P3. 用 stoken 换 cookie_token（passport API，无需 DS）

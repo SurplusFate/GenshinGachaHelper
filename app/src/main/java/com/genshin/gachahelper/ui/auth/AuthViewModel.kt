@@ -267,28 +267,62 @@ class AuthViewModel @Inject constructor(
             var finalLtoken = ltoken
 
             // 若已有 stoken，用它补齐缺失的 cookie_token / ltoken
-            // （stoken 可用时这是最可靠的换取通道）
+            // 2026-11-20 米游社改版后，老的 getCookieAccountInfoBySToken /
+            // getLTokenBySToken 已全部失效（405 / -100），必须走
+            // ma-cn-session/app/exchange；老接口只保留作兜底。
             if (!stoken.isNullOrBlank()) {
                 if (finalCookieToken.isNullOrBlank()) {
-                    when (val cookieResult = mihoyoApi.getCookieTokenByStoken(stoken, aid, mid)) {
+                    val exchangedCookie = mihoyoApi.exchangeTokenByStoken(
+                        stoken, mid, MihoyoApiService.DST_COOKIE_TOKEN
+                    )
+                    val cookieResult: ApiResult<String> = when (exchangedCookie) {
+                        is ApiResult.Success -> exchangedCookie
+                        is ApiResult.Error -> {
+                            setState {
+                                copy(
+                                    debugInfo = (uiState.value.debugInfo ?: "") +
+                                        "\nexchange cookie_token 失败(${exchangedCookie.message})，回落老接口"
+                                )
+                            }
+                            mihoyoApi.getCookieTokenByStoken(stoken, aid, mid)
+                        }
+                    }
+                    when (cookieResult) {
                         is ApiResult.Success -> {
                             finalCookieToken = cookieResult.data
                             setState {
                                 copy(
-                                    debugInfo = "cookie_token 获取成功: ${finalCookieToken.take(16)}..."
+                                    debugInfo = (uiState.value.debugInfo ?: "") +
+                                        "\ncookie_token 获取成功: ${finalCookieToken.take(16)}..."
                                 )
                             }
                         }
                         is ApiResult.Error -> setState {
                             copy(
-                                debugInfo = "cookie_token 获取失败: ${cookieResult.message}"
+                                debugInfo = (uiState.value.debugInfo ?: "") +
+                                    "\ncookie_token 获取失败: ${cookieResult.message}"
                             )
                         }
                     }
                 }
 
                 if (finalLtoken.isNullOrBlank()) {
-                    when (val ltokenResult = mihoyoApi.getLTokenByStoken(stoken, aid, mid)) {
+                    val exchangedLtoken = mihoyoApi.exchangeTokenByStoken(
+                        stoken, mid, MihoyoApiService.DST_LTOKEN
+                    )
+                    val ltokenResult: ApiResult<String> = when (exchangedLtoken) {
+                        is ApiResult.Success -> exchangedLtoken
+                        is ApiResult.Error -> {
+                            setState {
+                                copy(
+                                    debugInfo = (uiState.value.debugInfo ?: "") +
+                                        "\nexchange ltoken 失败(${exchangedLtoken.message})，回落老接口"
+                                )
+                            }
+                            mihoyoApi.getLTokenByStoken(stoken, aid, mid)
+                        }
+                    }
+                    when (ltokenResult) {
                         is ApiResult.Success -> {
                             finalLtoken = ltokenResult.data
                             setState {

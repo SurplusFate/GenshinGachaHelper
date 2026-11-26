@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+## [1.9.33] - 2026-11-26
+
+### 修复
+- **扫码登录后获取角色恒报 `-100 登录状态失效`**（2026-11-20 米游社接口改版导致）。现象：扫码确认成功，随后 `getUserGameRolesByCookie` 返回 -100，无法进入 App。真机抓包确认根因有两层：
+  1. 新版通行证扫码确认**不再通过 Set-Cookie 下发凭据**（响应头只有 WAF 的 `aliyungf_tc`），只有一个 `data.tokens[0]`（`token_type=1`，值以 `v2_` 开头）的 stoken。旧注释「凭据来自响应头」与实际不符。
+  2. 拿到 stoken 后本应用调用的 `account/auth/api/getCookieAccountInfoBySToken`（HTTP 405）与 `getLTokenBySToken`（retcode -100）在 11-20 后已全部失效，导致 `cookie_token` / `ltoken` 都补不上，最终只剩 stoken 去打 binding 接口 → -100。
+- **改用 `passport-api.mihoyo.com/account/ma-cn-session/app/exchange` 换票**（11-20 后唯一可用通道）：`dst_token_type=4` 取 v2 cookie_token、`=2` 取 v2 ltoken。
+  - `DsSigner` 新增 `generateDSProd()`：passport SDK 的 `SALT_PROD`（不是网页 4X/LK2），签名原文 `salt&t&r&b&q=`，DS 头 `t,r,md5`。
+  - body 字段顺序固定 `mid → dst_token_type → src_token`（官方 Gson 的 HashMap 桶序，插入序会被判签名错误）。
+  - 请求头按米游社 App 2.118.1：`x-rpc-app_id=bll8iq97cem8`、`x-rpc-client_type=2`、`x-rpc-game_biz=bbs_cn`、`x-rpc-sdk_version/account_version=2.44.0`，设备身份沿用 App 自身的 device_id / device_fp（与 stoken 签发设备一致）。
+  - 老的两个换票接口保留为兜底，exchange 失败时才回落（不再作为主路径）。
+- 实测验证（2026-11-26）：exchange 换出 v2 cookie_token + ltoken 后，`binding/api/getUserGameRolesByCookie` 返回 retcode 0，正常拿到角色（UID / 昵称 / 天空岛）。
+
+### 变更
+- 版本号：`versionCode 93 → 94`，`versionName 1.9.32 → 1.9.33`。
+
 ## [1.9.32] - 2026-10-15
 
 ### 删除

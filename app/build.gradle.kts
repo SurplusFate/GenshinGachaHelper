@@ -52,8 +52,8 @@ android {
         applicationId = "com.genshin.gachahelper"
         minSdk = 26
         targetSdk = 36
-        versionCode = 93
-        versionName = "1.9.32"
+        versionCode = 94
+        versionName = "1.9.33"
 
         // 无 androidTest 源码集，不再声明悬空的 instrumentation runner
         vectorDrawables {

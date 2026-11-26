@@ -110,6 +110,22 @@ object DsSigner {
     }
 
     /**
+     * 生成 passport 账号域（ma-cn-session）使用的 DS。
+     *
+     * 2026-11-20 米游社改版后，唯一还能用 stoken 换 v2 cookie_token / ltoken
+     * 的通道是 `account/ma-cn-session/app/exchange`。它用的是 passport SDK
+     * 的 RequestUtils.SALT_PROD（不是网页的 4X / LK2），签名原文格式与 DS2 相同：
+     *   salt={PROD}&t={t}&r={r}&b={body}&q=
+     * 但 r 取 100001-200000 的整数，返回值仍是 `t,r,md5`。
+     */
+    fun generateDSProd(body: String): String {
+        val t = (System.currentTimeMillis() / 1000).toString()
+        val r = (100001..200000).random()
+        val raw = "salt=${Salt.PROD}&t=$t&r=$r&b=$body&q="
+        return "$t,$r,${md5(raw)}"
+    }
+
+    /**
      * 生成随机设备 ID
      */
     fun randomDeviceId(): String {
