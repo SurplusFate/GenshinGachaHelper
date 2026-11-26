@@ -37,18 +37,33 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      # release.keystore 未入库（.gitignore 已屏蔽），CI 现场生成一次性密钥供签名校验通过。
-      # 口令随机生成并经 GITHUB_ENV 传给 Gradle，仓库与 workflow 中都不留明文口令。
-      - name: Generate throwaway keystore
+      # 优先用仓库 Secrets 里的固定签名密钥（KEYSTORE_BASE64 / 口令 / 别名），
+      # 保证每个 release 签名一致、老用户能直接覆盖升级；
+      # Secrets 缺失时才现场生成一次性密钥（仅够签名校验通过，不可用于发布升级）。
+      - name: Prepare signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_STORE_PASSWORD: ${{ secrets.KEYSTORE_STORE_PASSWORD }}
+          KEYSTORE_KEY_ALIAS: ${{ secrets.KEYSTORE_KEY_ALIAS }}
+          KEYSTORE_KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
         run: |
-          PASS="$(openssl rand -hex 16)"
-          echo "KEYSTORE_STORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
-          echo "KEYSTORE_KEY_PASSWORD=$PASS" >> "$GITHUB_ENV"
-          echo "KEYSTORE_KEY_ALIAS=gacha-release" >> "$GITHUB_ENV"
-          keytool -genkeypair -v -keystore release.keystore -alias gacha-release \
-            -keyalg RSA -keysize 2048 -validity 3650 \
-            -storepass "$PASS" -keypass "$PASS" \
-            -dname "CN=CI, OU=CI, O=CI, L=CI, ST=CI, C=CN"
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+            echo "使用 Secrets 中的固定签名密钥"
+            echo "KEYSTORE_STORE_PASSWORD=$KEYSTORE_STORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEYSTORE_KEY_PASSWORD=$KEYSTORE_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEYSTORE_KEY_ALIAS=$KEYSTORE_KEY_ALIAS" >> "$GITHUB_ENV"
+          else
+            echo "::warning::未配置 KEYSTORE_BASE64，现场生成一次性密钥（产物无法覆盖升级）"
+            PASS="$(openssl rand -hex 16)"
+            echo "KEYSTORE_STORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
+            echo "KEYSTORE_KEY_PASSWORD=$PASS" >> "$GITHUB_ENV"
+            echo "KEYSTORE_KEY_ALIAS=gacha-release" >> "$GITHUB_ENV"
+            keytool -genkeypair -v -keystore release.keystore -alias gacha-release \
+              -keyalg RSA -keysize 2048 -validity 3650 \
+              -storepass "$PASS" -keypass "$PASS" \
+              -dname "CN=CI, OU=CI, O=CI, L=CI, ST=CI, C=CN"
+          fi
 
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
@@ -88,7 +103,9 @@ jobs:
             echo "Release $TAG 已存在，跳过"
             exit 0
           fi
+          # 沿用历史命名习惯：GenshinGachaHelper-v1.9.33.apk
+          cp app/build/outputs/apk/release/app-release.apk "GenshinGachaHelper-v${VERSION}.apk"
           gh release create "$TAG" \
-            app/build/outputs/apk/release/*.apk \
+            "GenshinGachaHelper-v${VERSION}.apk" \
             --title "v${VERSION}" \
             --generate-notes
